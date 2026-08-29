@@ -907,6 +907,31 @@ class ModelScanner:
         finally:
             self._is_initializing = False # Unset flag
 
+    @staticmethod
+    def _cache_entry_size_changed(entry: Dict[str, Any], file_path: str) -> bool:
+        """True when the on-disk file size differs from the cached entry's size."""
+        stored_size = entry.get('size')
+        if not stored_size:
+            return False
+        try:
+            return os.path.getsize(file_path) != stored_size
+        except OSError:
+            return False
+
+    def _drop_stale_cache_entry(self, file_path: str, entry: Dict[str, Any]) -> None:
+        """Remove a stale cache entry (file replaced on disk) from all indexes."""
+        try:
+            self._cache.raw_data.remove(entry)
+        except ValueError:
+            pass
+        self._cache.remove_from_version_index(entry)
+        sha256 = entry.get('sha256')
+        if sha256:
+            self._hash_index.remove_by_path(file_path, str(sha256).lower())
+        for tag in entry.get('tags') or []:
+            self._tags_count[tag] = max(0, self._tags_count.get(tag, 0) - 1)
+        self.bump_cache_version()
+
     async def _reconcile_cache(self) -> None:
         """Fast cache reconciliation - only process differences between cache and filesystem"""
         self.reset_cancellation()
@@ -950,15 +975,30 @@ class ModelScanner:
                             # Construct paths exactly as they would be in cache
                             file_path = os.path.join(root, file).replace(os.sep, '/')
                             real_file_path = os.path.realpath(os.path.join(root, file))
-                            
+                            aria2_partial = os.path.exists(f"{os.path.join(root, file)}.aria2")
+
                             # Check if this file is already in cache
                             if file_path in cached_paths:
                                 found_paths.add(file_path)
+                                if not aria2_partial and self._cache_entry_size_changed(path_to_item[file_path], os.path.join(root, file)):
+                                    # File content changed on disk (e.g. a
+                                    # replaced incomplete/corrupted model):
+                                    # drop the stale entry and reprocess it so
+                                    # the SHA256 gets recomputed.
+                                    self._drop_stale_cache_entry(file_path, path_to_item[file_path])
+                                    new_files.append(file_path)
                                 continue
 
                             cached_real_match = cached_real_paths.get(real_file_path)
                             if cached_real_match:
                                 found_paths.add(cached_real_match)
+                                continue
+
+                            # In-progress aria2 download: the payload exists
+                            # under its final name but is incomplete. Skipping
+                            # it keeps a wrong SHA256 from being persisted for
+                            # a partial file.
+                            if aria2_partial:
                                 continue
 
                             if file_path in self._excluded_models:
@@ -1339,7 +1379,7 @@ class ModelScanner:
         hash_status = model_data.get('hash_status', '')
         if not model_data.get('sha256') and hash_status != 'pending' and file_path:
             try:
-                logger.info(f"Computing SHA256 hash for {file_path} (was empty from metadata)")
+                logger.info(f"Computing SHA256 hash for {file_path} (missing or invalidated in metadata)")
                 sha256 = await calculate_sha256(file_path)
                 if sha256:
                     model_data['sha256'] = sha256.lower()
@@ -1538,6 +1578,11 @@ class ModelScanner:
                         if entry.is_file(follow_symlinks=True):
                             ext = os.path.splitext(entry.name)[1].lower()
                             if ext not in self.file_extensions:
+                                continue
+
+                            # Skip in-progress aria2 downloads: the payload
+                            # exists under its final name but is incomplete.
+                            if os.path.exists(f"{entry.path}.aria2"):
                                 continue
 
                             file_path = entry.path.replace(os.sep, "/")

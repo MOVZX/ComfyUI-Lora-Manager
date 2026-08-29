@@ -45,6 +45,11 @@ class MetadataManager:
             # Create model instance
             metadata = model_class.from_dict(data)
                 
+            # A stored hash is only valid for the file it was computed from:
+            # invalidate it when the on-disk size no longer matches, so a
+            # replaced incomplete/corrupted file gets re-hashed on re-scan.
+            MetadataManager._invalidate_stale_hash(metadata, file_path)
+
             # Normalize paths
             await MetadataManager._normalize_metadata_paths(metadata, file_path)
             
@@ -80,6 +85,39 @@ class MetadataManager:
             payload["size"] = stat_result.st_size
         if "modified" not in payload:
             payload["modified"] = stat_result.st_mtime
+
+    @staticmethod
+    def _invalidate_stale_hash(metadata: BaseModelMetadata, file_path: str) -> None:
+        """Invalidate a stored SHA256 when the on-disk file size no longer
+        matches the size recorded alongside it.
+
+        A hash computed for an incomplete or corrupted file (partial download
+        scanned before completion, manually replaced file) must not survive a
+        re-scan: scans only hash files whose sidecar has no hash yet, so
+        without this check the wrong hash would be permanent. Size is the only
+        reliable change signal — ``modified`` holds the download/import time,
+        not the file mtime.
+        """
+        stored_size = metadata.size
+        if not stored_size:
+            return
+        try:
+            stat_result = os.stat(file_path)
+        except OSError:
+            return
+        if stat_result.st_size == stored_size:
+            return
+        # Normalize the recorded size so the persisted sidecar matches disk
+        # after the next save (prevents repeated invalidation every scan).
+        metadata.size = stat_result.st_size
+        if metadata.sha256:
+            logger.info(
+                "Invalidating stored SHA256 for %s: file size changed from %s to %s bytes; hash will be recomputed",
+                file_path,
+                stored_size,
+                stat_result.st_size,
+            )
+            metadata.sha256 = ""
 
     @staticmethod
     async def load_metadata_payload(file_path: str) -> Dict[str, Any]:
