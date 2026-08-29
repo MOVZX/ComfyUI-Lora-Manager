@@ -1,4 +1,5 @@
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -35,8 +36,8 @@ def _get_hash_chunk_size_bytes() -> int:
     return max(1, int(chunk_size_value * 1024 * 1024))
 
 
-async def calculate_sha256(file_path: str) -> str:
-    """Calculate SHA256 hash of a file (full file content).
+def _calculate_sha256_sync(file_path: str) -> str:
+    """Blocking core of :func:`calculate_sha256`, meant to run in a worker thread.
 
     Uses ``posix_fadvise`` with ``POSIX_FADV_DONTNEED`` to avoid polluting the OS page
     cache — critical on WSL where cached file pages live inside the VM and are not
@@ -57,6 +58,17 @@ async def calculate_sha256(file_path: str) -> str:
         if hasattr(os, "posix_fadvise") and hasattr(os, "POSIX_FADV_DONTNEED"):
             os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
     return sha256_hash.hexdigest()
+
+
+async def calculate_sha256(file_path: str) -> str:
+    """Calculate SHA256 hash of a file (full file content) without blocking the
+    event loop.
+
+    The read/hash work runs in a worker thread, so callers on the aiohttp event
+    loop (e.g. incremental cache reconciliation after new files land on disk)
+    don't freeze the ComfyUI UI while multi-GB files are hashed.
+    """
+    return await asyncio.to_thread(_calculate_sha256_sync, file_path)
 
 
 def calculate_autov2(file_path: str) -> str:
