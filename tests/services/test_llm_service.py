@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from unittest import mock
 
 import pytest
@@ -322,8 +323,12 @@ class MockGetSession:
 
     def __init__(self, response):
         self._response = response
+        self.last_url = None
+        self.last_headers = None
 
-    def get(self, url):
+    def get(self, url, headers=None):
+        self.last_url = url
+        self.last_headers = headers
         return self._response
 
     async def __aenter__(self):
@@ -340,6 +345,14 @@ class CorruptJsonResponse(MockResponse):
         raise UnicodeDecodeError("utf-8", b"\x9a", 0, 1, "invalid start byte")
 
 
+class SlowResponse(MockResponse):
+    """Response whose body takes a moment to read, to force contention."""
+
+    async def json(self):
+        await asyncio.sleep(0.05)
+        return self._json_data
+
+
 class TestModelCatalog:
     """Tests for _load_model_catalog / fetch_ollama_models error handling."""
 
@@ -348,9 +361,11 @@ class TestModelCatalog:
         """Reset the module-level catalog cache around each test."""
         llm_module._catalog_cache = None
         llm_module._model_output_limits = {}
+        llm_module._catalog_last_failure = None
         yield
         llm_module._catalog_cache = None
         llm_module._model_output_limits = {}
+        llm_module._catalog_last_failure = None
 
     @pytest.mark.asyncio
     async def test_load_model_catalog_falls_back_on_unicode_decode_error(self):
@@ -373,3 +388,86 @@ class TestModelCatalog:
             models = await fetch_ollama_models("http://localhost:11434/v1")
 
         assert models == []
+
+    @pytest.mark.asyncio
+    async def test_catalog_request_disables_brotli_encoding(self):
+        """The catalog request must not advertise br — a corrupt brotli stream
+        can crash the native decoder (Windows access violation, issue #1099)."""
+        response = MockResponse(200, json_data={})
+        session = MockGetSession(response)
+
+        with mock.patch("aiohttp.ClientSession", return_value=session):
+            await llm_module._load_model_catalog()
+
+        assert session.last_headers == {"Accept-Encoding": "gzip, deflate"}
+
+    @pytest.mark.asyncio
+    async def test_ollama_request_disables_brotli_encoding(self):
+        """The Ollama models request must not advertise br either."""
+        response = MockResponse(200, json_data={"data": [{"id": "llama3"}]})
+        session = MockGetSession(response)
+
+        with mock.patch("aiohttp.ClientSession", return_value=session):
+            models = await fetch_ollama_models("http://localhost:11434/v1")
+
+        assert models == ["llama3"]
+        assert session.last_headers == {"Accept-Encoding": "gzip, deflate"}
+
+    @pytest.mark.asyncio
+    async def test_failed_fetch_is_negatively_cached(self):
+        """A failed fetch is not retried until the cooldown elapses."""
+        created = []
+
+        def factory(*args, **kwargs):
+            session = MockGetSession(MockResponse(500, text_data="error"))
+            created.append(session)
+            return session
+
+        with mock.patch("aiohttp.ClientSession", side_effect=factory):
+            first = await llm_module._load_model_catalog()
+            second = await llm_module._load_model_catalog()
+
+        assert first == {}
+        assert second == {}
+        assert len(created) == 1
+        assert llm_module._catalog_last_failure is not None
+
+    @pytest.mark.asyncio
+    async def test_fetch_retries_after_cooldown(self):
+        """Once the cooldown elapses, the next call fetches again."""
+        bad = MockGetSession(MockResponse(500, text_data="error"))
+        with mock.patch("aiohttp.ClientSession", return_value=bad):
+            assert await llm_module._load_model_catalog() == {}
+
+        # Simulate the cooldown having elapsed.
+        llm_module._catalog_last_failure = (
+            time.monotonic() - llm_module._CATALOG_FAILURE_COOLDOWN - 1
+        )
+
+        good = MockGetSession(
+            MockResponse(200, json_data={"openai": {"models": {"gpt-4o": {}}}})
+        )
+        with mock.patch("aiohttp.ClientSession", return_value=good):
+            catalog = await llm_module._load_model_catalog()
+
+        assert catalog == {"openai": ["gpt-4o"]}
+
+    @pytest.mark.asyncio
+    async def test_concurrent_fetches_are_deduplicated(self):
+        """Concurrent callers share a single in-flight fetch."""
+        created = []
+
+        def factory(*args, **kwargs):
+            session = MockGetSession(
+                SlowResponse(200, json_data={"openai": {"models": {"gpt-4o": {}}}})
+            )
+            created.append(session)
+            return session
+
+        with mock.patch("aiohttp.ClientSession", side_effect=factory):
+            results = await asyncio.gather(
+                *(llm_module._load_model_catalog() for _ in range(3))
+            )
+
+        assert len(created) == 1
+        assert all(r == {"openai": ["gpt-4o"]} for r in results)
