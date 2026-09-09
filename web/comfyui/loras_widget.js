@@ -48,7 +48,7 @@ export function addLorasWidget(node, name, opts, callback) {
   }
 
   // Set initial height using CSS variables approach
-  const defaultHeight = 200;
+  const defaultHeight = 120;
 
   // Set a fixed minimum height so the node has a reasonable starting size.
   // Adding or removing LoRAs does NOT change the node size — the container
@@ -886,7 +886,7 @@ export function addLorasWidget(node, name, opts, callback) {
     container.removeEventListener('keydown', handleKeyboardNavigation);
   };
 
-  return { minWidth: 400, minHeight: defaultHeight, widget };
+  return { minWidth: 240, minHeight: defaultHeight, widget };
 }
 
 // Node classes whose declared "loras" input (LORAS widget type) also applies

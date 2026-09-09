@@ -125,7 +125,7 @@
    is determined solely by CSS, not by how many LoRAs are inside. */
 .lm-loras-container.lm-vue-node {
   height: 100%;
-  min-height: var(--comfy-widget-min-height, 200px);
+  min-height: var(--comfy-widget-min-height, 120px);
   contain: layout size;
 }
 
