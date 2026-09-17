@@ -3,9 +3,7 @@
         "cancel": "Abbrechen",
         "confirm": "Bestätigen",
         "reorder": {
-            "dragHandle": "Zum Neuordnen ziehen (Alt + ↑/↓)",
-            "ariaLabel": "{item} neu anordnen, Position {position} von {total}",
-            "announcement": "An Position {position} von {total} verschoben"
+            "dragHandle": "Zum Neuordnen ziehen"
         },
         "actions": {
             "save": "Speichern",
@@ -1243,11 +1241,12 @@
         },
         "noPaths": {
             "title": "Keine Ordner für weitere Modelle gefunden",
-            "descriptionStandalone": "Die Verwaltung weiterer Modelle ist aktiviert, aber keiner der konfigurierten Modellordner existiert auf dem Datenträger. Fügen Sie die unten stehenden Ordnerpfade zu settings.json hinzu und starten Sie LoRA Manager neu.",
+            "descriptionStandalone": "Die Verwaltung weiterer Modelle ist aktiviert, aber es wurden keine Ordner für weitere Modelle gefunden. Fügen Sie die benötigten Ordnerschlüssel zum Abschnitt folder_paths Ihrer settings.json hinzu und starten Sie LoRA Manager neu.",
             "hintStandalone": "Nur die oben aufgeführten Ordnerschlüssel werden gescannt; nicht benötigte Schlüssel können weggelassen werden.",
             "descriptionComfyUI": "Die Verwaltung weiterer Modelle ist aktiviert, aber keiner der konfigurierten Modellordner existiert auf dem Datenträger. Fügen Sie die entsprechenden Modellordner zu Ihren ComfyUI-Modellpfaden hinzu und laden Sie diese Seite neu.",
             "hintComfyUI": "Weitere Modelle werden aus den Ordnern vae, upscale_models, text_encoders, clip_vision und controlnet von ComfyUI gelesen.",
-            "openSettings": "Einstellungen öffnen"
+            "openSettings": "Einstellungen öffnen",
+            "openSettingsFolder": "Einstellungsordner öffnen"
         }
     },
     "sidebar": {
@@ -1488,6 +1487,10 @@
             "progress": {
                 "currentFile": "Aktuelle Datei:",
                 "downloading": "Wird heruntergeladen: {name}",
+                "metadata": "Metadaten: {name}",
+                "indexingFile": "Modelldatei wird gelesen...",
+                "fetchingSourceMetadata": "Metadaten werden von {source} abgerufen...",
+                "fetchingMetadata": "Metadaten werden abgerufen...",
                 "transferred": "Heruntergeladen: {downloaded} / {total}",
                 "transferredSimple": "Heruntergeladen: {downloaded}",
                 "transferredUnknown": "Heruntergeladen: --",
