@@ -928,6 +928,7 @@ export class SettingsManager {
 
         // Update API key status display (do NOT pre-fill the input)
         this.updateApiKeyStatus();
+        this.updateHfApiKeyStatus();
         this.updateLlmApiKeyStatus();
 
         // ── AI Provider settings ──────────────────────────────────────
@@ -1191,6 +1192,9 @@ export class SettingsManager {
 
         this.updateExampleImagesOpenSettingsVisibility();
 
+        // Load sidecar storage settings
+        this.loadSidecarStorageSettings();
+
         // Load download path templates
         this.loadDownloadPathTemplates();
 
@@ -1278,6 +1282,9 @@ export class SettingsManager {
         });
         this.attachPathField('exampleImagesLocalRoot', {
             onAfterSelect: () => this.saveInputSetting('exampleImagesLocalRoot', 'example_images_local_root'),
+        });
+        this.attachPathField('sidecarStoragePath', {
+            onAfterSelect: () => this.handleSidecarStoragePathChange(),
         });
     }
 
@@ -3378,6 +3385,223 @@ export class SettingsManager {
         this.updateExampleImagesOpenSettingsVisibility();
     }
 
+    loadSidecarStorageSettings() {
+        const currentMode = state.global.settings.sidecar_storage_mode === 'centralized'
+            ? 'centralized'
+            : 'alongside';
+
+        const modeSelect = document.getElementById('sidecarStorageMode');
+        if (modeSelect) {
+            modeSelect.value = currentMode;
+        }
+        // Baseline used to detect a mode change in handleSidecarStorageModeChange
+        this._loadedSidecarStorageMode = currentMode;
+        // Baseline used to detect a root change in handleSidecarStoragePathChange
+        this._loadedSidecarStoragePath = state.global.settings.sidecar_storage_path || '';
+
+        const pathInput = document.getElementById('sidecarStoragePath');
+        if (pathInput) {
+            pathInput.value = state.global.settings.sidecar_storage_path || '';
+        }
+
+        this.updateSidecarStorageVisibility();
+    }
+
+    updateSidecarStorageVisibility() {
+        const modeSelect = document.getElementById('sidecarStorageMode');
+        const pathSetting = document.getElementById('sidecarStoragePathSetting');
+        if (!pathSetting) return;
+
+        const mode = modeSelect ? modeSelect.value : state.global.settings.sidecar_storage_mode;
+        pathSetting.style.display = mode === 'centralized' ? 'block' : 'none';
+    }
+
+    async handleSidecarStorageModeChange() {
+        const modeSelect = document.getElementById('sidecarStorageMode');
+        if (!modeSelect) return;
+
+        const previousMode = this._loadedSidecarStorageMode || 'alongside';
+
+        await this.saveSelectSetting('sidecarStorageMode', 'sidecar_storage_mode');
+        this.updateSidecarStorageVisibility();
+
+        const newMode = modeSelect.value;
+        this._loadedSidecarStorageMode = newMode;
+
+        // Existing sidecars are not moved automatically; offer to migrate them.
+        if (newMode !== previousMode) {
+            const direction = newMode === 'centralized' ? 'to_centralized' : 'to_alongside';
+            const confirmed = await this.confirmSidecarMigration(direction);
+            if (confirmed) {
+                await this.migrateSidecars(direction);
+            } else {
+                showToast('settings.sidecarStorage.migrationDeferred', {}, 'info');
+            }
+        }
+    }
+
+    // Path change while centralized storage is active: the assets under the
+    // previous root do not move by themselves, so offer a root relocation.
+    async handleSidecarStoragePathChange() {
+        const pathInput = document.getElementById('sidecarStoragePath');
+        if (!pathInput) return;
+
+        const previousPath = this._loadedSidecarStoragePath || '';
+
+        await this.saveInputSetting('sidecarStoragePath', 'sidecar_storage_path');
+
+        const newPath = pathInput.value.trim();
+        this._loadedSidecarStoragePath = newPath;
+
+        const centralized = state.global.settings.sidecar_storage_mode === 'centralized';
+        if (centralized && previousPath && previousPath !== newPath) {
+            const confirmed = await this.confirmSidecarMigration('relocate_root');
+            if (confirmed) {
+                await this.migrateSidecars('relocate_root', { old_root: previousPath });
+            } else {
+                showToast('settings.sidecarStorage.migrationDeferred', {}, 'info');
+            }
+        }
+    }
+
+    // Entry point for the "Migrate Sidecars Now" button: the direction follows
+    // the currently saved storage mode.
+    async confirmAndMigrateSidecars() {
+        const direction = state.global.settings.sidecar_storage_mode === 'centralized'
+            ? 'to_centralized'
+            : 'to_alongside';
+        const confirmed = await this.confirmSidecarMigration(direction);
+        if (confirmed) {
+            await this.migrateSidecars(direction);
+        }
+    }
+
+    confirmSidecarMigration(direction) {
+        const modalElement = document.getElementById('sidecarMigrationConfirmModal');
+        if (!modalElement) {
+            return Promise.resolve(false);
+        }
+
+        const isToCentralized = direction === 'to_centralized';
+        const isRelocate = direction === 'relocate_root';
+
+        const titleElement = modalElement.querySelector('[data-role="title"]');
+        if (titleElement) {
+            titleElement.textContent = isRelocate
+                ? translate('modals.sidecarMigrationConfirm.titleRelocateRoot', {}, 'Move sidecars to the new storage directory?')
+                : isToCentralized
+                    ? translate('modals.sidecarMigrationConfirm.titleToCentralized', {}, 'Move sidecars to centralized storage?')
+                    : translate('modals.sidecarMigrationConfirm.titleToAlongside', {}, 'Move sidecars back next to model files?');
+        }
+
+        const messageElement = modalElement.querySelector('[data-role="message"]');
+        if (messageElement) {
+            messageElement.textContent = isRelocate
+                ? translate('settings.sidecarStorage.confirmRelocateRoot', {}, 'The centralized storage directory changed, but existing sidecars and preview images are still in the previous directory. Move them to the new directory now?')
+                : isToCentralized
+                    ? translate('settings.sidecarStorage.confirmToCentralized', {}, 'The storage mode changed, but existing .metadata.json sidecars and preview images are not moved automatically. Move them into the centralized storage directory now? You can also do this later with the "Migrate Sidecars Now" button.')
+                    : translate('settings.sidecarStorage.confirmToAlongside', {}, 'The storage mode changed, but existing .metadata.json sidecars and preview images are not moved automatically. Move them back next to their model files now? You can also do this later with the "Migrate Sidecars Now" button.');
+        }
+
+        const confirmButton = modalElement.querySelector('[data-action="confirm-sidecar-migration"]');
+        const cancelButton = modalElement.querySelector('[data-action="cancel-sidecar-migration"]');
+        if (!confirmButton || !cancelButton) {
+            return Promise.resolve(false);
+        }
+
+        confirmButton.textContent = translate('modals.sidecarMigrationConfirm.confirmButton', {}, 'Migrate Now');
+
+        return new Promise((resolve) => {
+            let resolved = false;
+
+            const cleanup = () => {
+                confirmButton.removeEventListener('click', handleConfirm);
+                cancelButton.removeEventListener('click', handleCancel);
+                document.removeEventListener('keydown', handleEscape, true);
+            };
+
+            const finalize = (proceed) => {
+                if (resolved) {
+                    return;
+                }
+                resolved = true;
+                cleanup();
+                modalElement.classList.remove('show');
+                // Keep body.modal-open: the settings modal underneath is still open.
+                resolve(proceed);
+            };
+
+            const handleConfirm = (event) => {
+                event.preventDefault();
+                finalize(true);
+            };
+
+            const handleCancel = (event) => {
+                event.preventDefault();
+                finalize(false);
+            };
+
+            // Capture phase + stopPropagation so ESC never reaches the
+            // settings modal's own ESC handler underneath.
+            const handleEscape = (event) => {
+                if (event.key === 'Escape') {
+                    event.stopPropagation();
+                    finalize(false);
+                }
+            };
+
+            confirmButton.addEventListener('click', handleConfirm);
+            cancelButton.addEventListener('click', handleCancel);
+            document.addEventListener('keydown', handleEscape, true);
+
+            modalElement.classList.add('show');
+            cancelButton.focus();
+        });
+    }
+
+    async migrateSidecars(direction, extraBody = {}) {
+        const migrateBtn = document.getElementById('migrateSidecarsBtn');
+        try {
+            if (migrateBtn) {
+                migrateBtn.disabled = true;
+                migrateBtn.textContent = translate('settings.sidecarStorage.migratingButton', {}, 'Migrating...');
+            }
+
+            state.loadingManager?.showSimpleLoading(
+                translate('settings.sidecarStorage.migrating', {}, 'Migrating sidecars...')
+            );
+
+            const response = await fetch('/api/lm/sidecars/migrate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // The new mode/path is already saved by the time migration runs,
+                // so the backend guard requires force=true to confirm the
+                // "switch first, then migrate" flow.
+                body: JSON.stringify({ direction, force: true, ...extraBody }),
+            });
+
+            const data = await response.json();
+            if (!response.ok || data.success === false) {
+                throw new Error(data.error || 'Migration failed');
+            }
+
+            state.loadingManager?.hide();
+            showToast('settings.sidecarStorage.migrateSuccess', {}, 'success');
+
+            // Reload so cards pick up metadata/preview paths from the new location
+            resetAndReload(true);
+        } catch (error) {
+            console.error('Error migrating sidecars:', error);
+            state.loadingManager?.hide();
+            showToast('settings.sidecarStorage.migrateFailed', { message: error.message }, 'error');
+        } finally {
+            if (migrateBtn) {
+                migrateBtn.disabled = false;
+                migrateBtn.textContent = translate('settings.sidecarStorage.migrateButton', {}, 'Migrate Sidecars Now');
+            }
+        }
+    }
+
     async loadMetadataArchiveSettings() {
         try {
             // Load current settings from state
@@ -4350,6 +4574,28 @@ export class SettingsManager {
         }
     }
 
+    updateHfApiKeyStatus() {
+        const hasKey = !!(state.global.settings.huggingface_api_key_set ||
+                          state.global.settings.huggingface_api_key);
+        const statusText = document.getElementById('huggingfaceApiKeyStatusText');
+        const actionBtn = document.getElementById('huggingfaceApiKeyActionBtn');
+        if (!statusText || !actionBtn) return;
+
+        if (hasKey) {
+            statusText.classList.remove('api-key-status--unconfigured');
+            statusText.classList.add('api-key-status--configured');
+            statusText.innerHTML = '<i class="fas fa-check-circle text-success"></i> '
+                + translate('settings.huggingfaceApiKeyConfigured', {}, 'Configured');
+            actionBtn.textContent = translate('common.actions.change', {}, 'Change');
+        } else {
+            statusText.classList.remove('api-key-status--configured');
+            statusText.classList.add('api-key-status--unconfigured');
+            statusText.innerHTML = '<i class="fas fa-times-circle text-error"></i> '
+                + translate('settings.huggingfaceApiKeyNotConfigured', {}, 'Not configured');
+            actionBtn.textContent = translate('settings.huggingfaceApiKeySet', {}, 'Set up');
+        }
+    }
+
     updateLlmApiKeyStatus() {
         const hasKey = !!(state.global.settings.llm_api_key_set || state.global.settings.llm_api_key);
         const statusText = document.getElementById('llmApiKeyStatusText');
@@ -4397,9 +4643,17 @@ export class SettingsManager {
         const input = document.getElementById(inputId);
         if (input) input.value = '';
         if (!silent) {
-            if (inputId === 'civitaiApiKey') {
-                this.updateApiKeyStatus();
-            }
+            this.refreshApiKeyStatus(inputId);
+        }
+    }
+
+    refreshApiKeyStatus(inputId) {
+        if (inputId === 'civitaiApiKey') {
+            this.updateApiKeyStatus();
+        } else if (inputId === 'huggingfaceApiKey') {
+            this.updateHfApiKeyStatus();
+        } else if (inputId === 'llmApiKey') {
+            this.updateLlmApiKeyStatus();
         }
     }
 
@@ -4409,11 +4663,16 @@ export class SettingsManager {
 
         const value = input.value.trim();
 
+        const labelNames = {
+            civitai_api_key: 'CivitAI API Key',
+            huggingface_api_key: 'Hugging Face Access Token',
+            llm_api_key: 'LLM API Key',
+        };
+
         try {
             await this.saveSetting(settingsKey, value);
-            const labelName = settingsKey === 'civitai_api_key' ? 'CivitAI API Key' : 'LLM API Key';
             showToast('toast.settings.settingsUpdated',
-                { setting: labelName }, 'success');
+                { setting: labelNames[settingsKey] || 'API Key' }, 'success');
         } catch (error) {
             showToast('toast.settings.settingSaveFailed',
                 { message: error.message }, 'error');
@@ -4421,13 +4680,12 @@ export class SettingsManager {
         }
 
         // Update the in-memory flag so the UI reflects the change
-        if (settingsKey === 'civitai_api_key') {
-            state.global.settings.civitai_api_key_set = !!value;
+        const setFlagKey = `${settingsKey}_set`;
+        if (setFlagKey in state.global.settings) {
+            state.global.settings[setFlagKey] = !!value;
         }
         this.cancelEditApiKey(true, inputId);
-        if (inputId === 'civitaiApiKey') {
-            this.updateApiKeyStatus();
-        }
+        this.refreshApiKeyStatus(inputId);
     }
 
     toggleInputVisibility(button) {
