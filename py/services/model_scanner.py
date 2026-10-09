@@ -555,6 +555,9 @@ class _RootWalkResult:
     # excluded; the caller claims real paths in configured root order.
     new_candidates: List[Tuple[str, str]] = field(default_factory=list)
     discovered_folders: Set[str] = field(default_factory=set)
+    # Cached paths whose on-disk file size drifted (replaced/corrupted file);
+    # the event-loop side drops the stale entries and reprocesses them.
+    size_changed: List[str] = field(default_factory=list)
     files_seen: int = 0
     cancelled: bool = False
 
@@ -644,9 +647,19 @@ def _walk_root_for_reconcile(
 
             # Construct paths exactly as they would be in cache
             file_path = os.path.join(root, file).replace(os.sep, '/')
+            aria2_partial = os.path.exists(f"{os.path.join(root, file)}.aria2")
 
             if file_path in cached_paths:
                 result.found_paths.add(file_path)
+
+                if not aria2_partial and ModelScanner._cache_entry_size_changed(
+                    path_to_item[file_path], os.path.join(root, file)
+                ):
+                    # File content changed on disk (e.g. a replaced
+                    # incomplete/corrupted model): the event-loop side drops
+                    # the stale entry so the SHA256 gets recomputed.
+                    result.size_changed.append(file_path)
+
                 mark_stale_if_needed(file_path)
                 continue
 
@@ -659,6 +672,12 @@ def _walk_root_for_reconcile(
             if cached_real_match:
                 result.found_paths.add(cached_real_match)
                 mark_stale_if_needed(cached_real_match)
+                continue
+
+            # In-progress aria2 download: the payload exists under its final
+            # name but is incomplete. Skipping it keeps a wrong SHA256 from
+            # being persisted for a partial file.
+            if aria2_partial:
                 continue
 
             if file_path in excluded_models:
@@ -1955,89 +1974,6 @@ class ModelScanner:
                     stale_seen.add(cached_path)
                     stale_paths.append(cached_path)
 
-<<<<<<< HEAD
-                    # Record every visited directory (including empty ones) so
-                    # the folder tree stays accurate without a live walk.
-                    rel_dir = os.path.relpath(
-                        os.path.abspath(root), os.path.abspath(root_path)
-                    ).replace(os.path.sep, "/")
-                    if rel_dir != "." and not _is_hidden_relative_path(rel_dir):
-                        discovered_folders.add(rel_dir)
-
-                    for file in files:
-                        ext = os.path.splitext(file)[1].lower()
-                        if ext in self.file_extensions:
-                            # Construct paths exactly as they would be in cache
-                            file_path = os.path.join(root, file).replace(os.sep, '/')
-                            aria2_partial = os.path.exists(f"{os.path.join(root, file)}.aria2")
-
-                            # Check if this file is already in cache
-                            if file_path in cached_paths:
-                                found_paths.add(file_path)
-
-                                if not aria2_partial and self._cache_entry_size_changed(path_to_item[file_path], os.path.join(root, file)):
-                                    # File content changed on disk (e.g. a
-                                    # replaced incomplete/corrupted model):
-                                    # drop the stale entry and reprocess it so
-                                    # the SHA256 gets recomputed.
-                                    self._drop_stale_cache_entry(file_path, path_to_item[file_path])
-                                    new_files.append(file_path)
-
-                                mark_stale_if_needed(file_path)
-
-                                continue
-
-                            # Only a cache miss needs the physical path, so the
-                            # realpath syscalls are paid per changed file rather
-                            # than per file in the library.
-                            real_file_path = os.path.realpath(os.path.join(root, file))
-
-                            cached_real_match = lookup_cached_real_path(real_file_path)
-                            if cached_real_match:
-                                found_paths.add(cached_real_match)
-                                mark_stale_if_needed(cached_real_match)
-                                continue
-
-                            # In-progress aria2 download: the payload exists
-                            # under its final name but is incomplete. Skipping
-                            # it keeps a wrong SHA256 from being persisted for
-                            # a partial file.
-                            if aria2_partial:
-                                continue
-
-                            if file_path in self._excluded_models:
-                                continue
-                                
-                            # Try case-insensitive match on Windows
-                            if os.name == 'nt':
-                                lower_path = file_path.lower()
-                                matched = False
-                                for cached_path in cached_paths:
-                                    if cached_path.lower() == lower_path:
-                                        found_paths.add(cached_path)
-                                        mark_stale_if_needed(cached_path)
-                                        matched = True
-                                        break
-                                if matched:
-                                    continue
-                                
-                            if real_file_path in discovered_real_files:
-                                continue
-
-                            discovered_real_files.add(real_file_path)
-                            # This is a new file to process
-                            new_files.append(file_path)
-                    
-                    # Yield control periodically
-                    await asyncio.sleep(0)
-                    if self.is_cancelled():
-                        logger.info(f"{self.model_type.capitalize()} Scanner: Reconcile scan cancelled")
-                        await self._broadcast_scan_progress(
-                            'cancelled', 'reconcile_scan', 0, False,
-                            elapsed_seconds=time.time() - start_time,
-                        )
-                        return
-=======
             for result in walk_results:
                 for file_path, real_file_path in result.new_candidates:
                     if real_file_path in discovered_real_files:
@@ -2045,7 +1981,15 @@ class ModelScanner:
                     discovered_real_files.add(real_file_path)
                     # This is a new file to process
                     new_files.append(file_path)
->>>>>>> upstream/main
+
+                for file_path in result.size_changed:
+                    entry = path_to_item.get(file_path)
+                    if entry is None:
+                        continue
+                    # File content changed on disk: drop the stale entry and
+                    # reprocess it so the SHA256 gets recomputed.
+                    self._drop_stale_cache_entry(file_path, entry)
+                    new_files.append(file_path)
 
             # Process new files in batches
             total_added = 0
