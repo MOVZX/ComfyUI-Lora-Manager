@@ -33,6 +33,13 @@ from ..utils.constants import (
     VALID_OTHER_CIVITAI_TYPES,
 )
 from ..utils.civitai_utils import normalize_civitai_download_url, rewrite_preview_url
+from ..utils.paid_access import (
+    is_early_access_deadline_active,
+    is_gate_active,
+    is_permanent_paid,
+    normalize_paid_access,
+    parse_civitai_timestamp,
+)
 from ..utils.file_utils import calculate_sha256, calculate_autov3
 from ..utils.preview_selection import resolve_mature_threshold, select_preview_media
 from ..utils.utils import calculate_filename_for_model, sanitize_folder_name
@@ -63,8 +70,11 @@ CIVITAI_DOWNLOAD_URL_PREFIXES = (
 
 # Hosts a model download may hit (metadata + file transfer). The pre-flight
 # cooldown gate consults the RateLimitCoordinator for these before a download
-# occupies a concurrency slot.
-DOWNLOAD_PREFLIGHT_HOSTS = ("civitai.com", "civitai.red", "civarchive.com")
+# occupies a concurrency slot. civarchive.com is only gated for downloads
+# whose source is CivArchive: a cooldown armed by background metadata fetches
+# must not block plain CivitAI downloads.
+DOWNLOAD_PREFLIGHT_HOSTS = ("civitai.com", "civitai.red")
+DOWNLOAD_PREFLIGHT_HOSTS_CIVARCHIVE = DOWNLOAD_PREFLIGHT_HOSTS + ("civarchive.com",)
 
 # Fallback retry_after when neither the vendor nor the coordinator can supply
 # a number (matches the Retry-After parsing default in downloader.py).
@@ -251,19 +261,30 @@ class DownloadManager:
         hostname = urlparse(url).hostname
         return hostname.lower() if hostname else "unknown"
 
-    async def _preflight_rate_limit_error(self) -> Optional[DownloadRateLimitError]:
+    async def _preflight_rate_limit_error(
+        self, source: str | None = None
+    ) -> Optional[DownloadRateLimitError]:
         """Fail fast when a download target host is in a rate-limit cooldown.
 
         Consults the RateLimitCoordinator's per-host cooldown state for the
-        hosts a model download may hit. Runs BEFORE the concurrency semaphore
+        hosts this download may hit. Runs BEFORE the concurrency semaphore
         is acquired so queued items never occupy a slot during a 429 episode.
         Deliberately non-blocking: the caller is expected to pace itself (the
         companion extension auto-pauses on the structured 429 response).
+
+        civarchive.com is only consulted when ``source == "civarchive"`` —
+        other downloads never touch it, so a cooldown armed there (typically
+        by bulk metadata fetches) must not block them.
         """
+        hosts = (
+            DOWNLOAD_PREFLIGHT_HOSTS_CIVARCHIVE
+            if source == "civarchive"
+            else DOWNLOAD_PREFLIGHT_HOSTS
+        )
         coordinator = await RateLimitCoordinator.get_instance()
         worst_host: Optional[str] = None
         worst_remaining = 0.0
-        for host in DOWNLOAD_PREFLIGHT_HOSTS:
+        for host in hosts:
             remaining = coordinator.remaining_seconds(host)
             if remaining > worst_remaining:
                 worst_host = host
@@ -671,7 +692,7 @@ class DownloadManager:
 
         # Pre-flight cooldown gate: fail fast (without holding a semaphore
         # slot) when a target host is still cooling down from an earlier 429.
-        preflight_error = await self._preflight_rate_limit_error()
+        preflight_error = await self._preflight_rate_limit_error(source)
         if preflight_error is not None:
             logger.info(
                 "Download %s skipped: %s", task_id, preflight_error
@@ -1985,40 +2006,32 @@ class DownloadManager:
                 os.makedirs(save_dir, exist_ok=True)
 
             # Check if this is a paid or early access model
-            paid_access = version_info.get("paidAccess")
-            if isinstance(paid_access, str):
-                # Some providers (e.g. CivArchive fallback) carry the DTO as JSON text
-                try:
-                    parsed = json.loads(paid_access)
-                    paid_access = parsed if isinstance(parsed, dict) else None
-                except (TypeError, ValueError):
-                    paid_access = None
-            if not isinstance(paid_access, dict):
-                paid_access = None
-            # An empty DTO ({"permanent": false, "endsAt": null}) is not a gate
-            if paid_access and not paid_access.get("permanent") and not paid_access.get("endsAt"):
-                paid_access = None
-            if version_info.get("earlyAccessEndsAt") or paid_access:
-                permanent_paid = bool(paid_access.get("permanent")) if paid_access else False
+            # CivitAI reports a non-null paidAccess only for an ACTIVE gate, so
+            # {"permanent": false, "endsAt": null} (a timed gate whose end is not
+            # recorded yet) still counts as gated here.
+            paid_access = normalize_paid_access(version_info.get("paidAccess"))
+            legacy_ea_ends_at = version_info.get("earlyAccessEndsAt")
+            gate_active = is_gate_active(paid_access) or is_early_access_deadline_active(
+                legacy_ea_ends_at
+            )
+            if gate_active:
+                permanent_paid = is_permanent_paid(paid_access)
                 if permanent_paid:
                     early_access_msg = (
                         "This model requires payment. Please ensure you have "
                         "purchased access and are logged in to Civitai."
                     )
                 else:
-                    early_access_date = version_info.get("earlyAccessEndsAt")
+                    early_access_date = legacy_ea_ends_at
                     if not early_access_date and paid_access:
                         early_access_date = paid_access.get("endsAt")
                     if not early_access_date:
                         early_access_date = ""
                     # Convert to a readable date if possible
                     try:
-                        from datetime import datetime
-
-                        date_obj = datetime.fromisoformat(
-                            early_access_date.replace("Z", "+00:00")
-                        )
-                        formatted_date = date_obj.strftime("%Y-%m-%d")
+                        formatted_date = parse_civitai_timestamp(
+                            early_access_date
+                        ).strftime("%Y-%m-%d")
                         early_access_msg = (
                             f"This model requires payment (until {formatted_date}). "
                         )

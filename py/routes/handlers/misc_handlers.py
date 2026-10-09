@@ -48,6 +48,7 @@ from ...services.cache_health_monitor import CacheHealthMonitor, CacheHealthStat
 from ...services.use_cases.sidecar_migration_use_case import SidecarMigrationUseCase
 from ...services.websocket_progress_callback import WebSocketBroadcastCallback
 from ...utils.models import BaseModelMetadata
+from ...utils.civitai_utils import build_civitai_model_page_url
 from ...utils.constants import (
     CIVITAI_USER_MODEL_TYPES,
     DEFAULT_NODE_COLOR,
@@ -2880,9 +2881,10 @@ class ModelLibraryHandler:
 
             try:
                 response = await metadata_provider.get_model_versions(model_id)
-            except ResourceNotFoundError:
+            except ResourceNotFoundError as exc:
                 return web.json_response(
-                    {"success": False, "error": "Model not found"}, status=404
+                    {"success": False, "error": str(exc) or "Model not found"},
+                    status=404,
                 )
             if not response or not response.get("modelVersions"):
                 return web.json_response(

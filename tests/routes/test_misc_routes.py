@@ -6,7 +6,7 @@ import subprocess
 import zipfile
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 from aiohttp import web
@@ -16,6 +16,7 @@ from py.routes.handlers import misc_handlers
 from py.routes.handlers.misc_handlers import (
     BackupHandler,
     DoctorHandler,
+    MiscHandlerSet,
     FileSystemHandler,
     HealthCheckHandler,
     LoraCodeHandler,
@@ -36,6 +37,7 @@ from py.utils.session_logging import (
 )
 from py.routes.misc_route_registrar import MISC_ROUTE_DEFINITIONS, MiscRouteRegistrar
 from py.routes.misc_routes import MiscRoutes
+from py.services.errors import ResourceNotFoundError
 
 
 def _json_payload(response) -> dict[str, Any]:
@@ -2747,6 +2749,38 @@ async def test_get_model_versions_status_supported_type_stays_interactive():
     ]
 
 
+@pytest.mark.asyncio
+async def test_get_model_versions_status_surfaces_not_found_details():
+    """A missing CivitAI model keeps the provider's diagnostic message."""
+
+    class NotFoundProvider:
+        async def get_model_versions(self, _model_id):
+            raise ResourceNotFoundError("Civitai model 3390681 was not found")
+
+    async def metadata_factory():
+        return NotFoundProvider()
+
+    handler = ModelLibraryHandler(
+        ServiceRegistryAdapter(
+            get_lora_scanner=fake_scanner_factory,
+            get_checkpoint_scanner=fake_scanner_factory,
+            get_embedding_scanner=fake_scanner_factory,
+            get_other_scanner=fake_scanner_factory,
+            get_downloaded_version_history_service=fake_download_history_service_factory,
+        ),
+        metadata_provider_factory=metadata_factory,
+    )
+
+    response = await handler.get_model_versions_status(
+        FakeRequest(query={"modelId": "3390681"})  # pyright: ignore[reportArgumentType]
+    )
+    payload = _json_payload(response)
+
+    assert response.status == 404
+    assert payload["success"] is False
+    assert "3390681" in payload["error"]
+
+
 class DummySidecarMigrationUseCase:
     def __init__(self, result):
         self.result = result
@@ -2865,3 +2899,66 @@ async def test_sidecar_migration_handler_relocate_root_requires_old_root():
     assert response.status == 400
     assert "old_root" in payload["error"]
     assert use_case.calls == []
+
+
+# --- Global price alerts panel endpoint -------------------------------------
+
+
+class _AnyHandler:
+    def __getattr__(self, _name):
+        return lambda request: None
+
+
+def _stub_misc_handler_set(**overrides) -> MiscHandlerSet:
+    names = (
+        "health",
+        "settings",
+        "usage_stats",
+        "lora_code",
+        "trained_words",
+        "model_examples",
+        "node_registry",
+        "model_library",
+        "metadata_archive",
+        "backup",
+        "filesystem",
+        "custom_words",
+        "wildcards",
+        "supporters",
+        "doctor",
+        "example_workflows",
+        "base_model",
+        "model_source_handler",
+        "agent_handler",
+        "download_routing",
+        "sidecar_migration",
+    )
+    handlers = {name: _AnyHandler() for name in names}
+    handlers.update(overrides)
+    return MiscHandlerSet(**handlers)
+
+
+def test_every_misc_route_definition_resolves_to_a_handler():
+    """A route added to the table without a mapping entry 500s only on a live
+    server, so assert the whole table resolves here."""
+
+    mapping = _stub_misc_handler_set().to_route_mapping()
+
+    assert [
+        definition.handler_name
+        for definition in MISC_ROUTE_DEFINITIONS
+        if definition.handler_name not in mapping
+    ] == []
+
+
+def test_price_alert_endpoints_are_gone():
+    """The redesign removed the standalone alerts surface: obtainability is an
+    attribute of the update surfaces, so no route may serve an alert list."""
+
+    leftovers = [
+        definition
+        for definition in MISC_ROUTE_DEFINITIONS
+        if "price-alert" in definition.path or "price_alert" in definition.handler_name
+    ]
+
+    assert leftovers == []
