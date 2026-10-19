@@ -264,6 +264,7 @@
         },
         "filter": {
             "title": "סנן מודלים",
+            "countTitle": "{name} — {count} מודלים",
             "presets": "קביעות מראש",
             "savePreset": "שמור מסננים פעילים כקביעה מראש חדשה.",
             "savePresetDisabledActive": "לא ניתן לשמור: קביעה מראש כבר פעילה. שנה מסננים כדי לשמור קביעה מראש חדשה",
@@ -399,7 +400,8 @@
             "autoOrganize": "ארגון אוטומטי",
             "metadata": "מטא-נתונים",
             "sidecarStorage": "אחסון קובצי לוואי",
-            "proxySettings": "הגדרות פרוקסי"
+            "proxySettings": "הגדרות פרוקסי",
+            "sendToWorkflow": "שליחה ל-workflow"
         },
         "nav": {
             "general": "כללי",
@@ -453,6 +455,18 @@
                 "saveFailed": "לא ניתן לשמור נתיבי דילוג: {message}"
             }
         },
+        "sendToWorkflowExclusions": {
+            "nodeClasses": {
+                "label": "סוגי צמתים מוחרגים",
+                "placeholder": "דוגמה: CheckpointLoaderSimple, MyCustomNode",
+                "help": "שמות מחלקה של צמתים ב-ComfyUI שלעולם לא מופיעים כיעדי שליחה ל-workflow. הפרד ערכים מרובים בפסיקים או בנקודותיים. צמתים שסומנו במפורש ב-ComfyUI (לחיצה ימנית → Mark as) פטורים מכך."
+            },
+            "titlePatterns": {
+                "label": "תבניות כותרת של צמתים מוחרגים",
+                "placeholder": "דוגמה: negative, preview",
+                "help": "צמתים שכותרתם מכילה אחד מקטעי הטקסט האלה (ללא תלות ברישיות) מוסתרים מיעדי השליחה ל-workflow. הפרד ערכים מרובים בפסיקים או בנקודותיים. צמתים שסומנו במפורש ב-ComfyUI (לחיצה ימנית → Mark as) פטורים מכך."
+            }
+        },
         "backup": {
             "autoEnabled": "גיבויים אוטומטיים",
             "autoEnabledHelp": "יוצר צילום מצב מקומי פעם ביום ושומר את הצילומים האחרונים לפי מדיניות השמירה.",
@@ -495,6 +509,42 @@
             },
             "validation": {
                 "saveFailed": "לא ניתן לשמור את מודלי הבסיס המוחרגים: {message}"
+            }
+        },
+        "downloadRootRules": {
+            "title": "כללי שורש להורדות",
+            "help": "מנתב הורדות לתיקיית שורש אחרת בהתאם למודל הבסיס או לתגיות של המודל.",
+            "description": "הכללים נבדקים לפי הסדר. ההתאמה הראשונה מנצחת; הורדות ללא התאמה משתמשות בשורש ברירת המחדל.",
+            "defaultHint": "ברירת מחדל: {root} — הורדות ללא התאמה מגיעות לכאן",
+            "defaultSuffix": "ברירת מחדל",
+            "addBaseModelRule": "כלל מודל בסיס",
+            "addTagRule": "כלל תגית",
+            "removeRule": "הסר כלל",
+            "moveUp": "הזז למעלה",
+            "moveDown": "הזז למטה",
+            "noRoots": "לא הוגדרו שורשים עבור סוג מודל זה.",
+            "matchTypes": {
+                "baseModel": "מודל בסיס",
+                "tag": "תגית"
+            },
+            "matchTypeChips": {
+                "baseModel": "BM",
+                "tag": "תגית"
+            },
+            "tagPlaceholder": "character, style, realistic",
+            "summary": {
+                "selectBaseModels": "בחר מודלי בסיס...",
+                "enterTags": "הזן תגיות...",
+                "more": "+{count} נוספים"
+            },
+            "types": {
+                "loras": "LoRA",
+                "checkpoints": "Checkpoint",
+                "unet": "Diffusion Model",
+                "embeddings": "Embedding"
+            },
+            "validation": {
+                "saveFailed": "לא ניתן לשמור את כללי השורש להורדות: {message}"
             }
         },
         "skipPreviouslyDownloadedModelVersions": {
@@ -541,6 +591,8 @@
             },
             "showVersionOnCard": "הצג גרסה בכרטיס",
             "showVersionOnCardHelp": "הצג או הסתר את שם הגרסה בכרטיסי המודל",
+            "showQuantizationOnCard": "הצג קוונטיזציה בכרטיס",
+            "showQuantizationOnCardHelp": "הצג את רמת הקוונטיזציה (למשל Q4_K_M, FP8) לצד שם הגרסה בכרטיסי המודל",
             "modelCardFooterAction": "פעולת כפתור כרטיס מודל",
             "modelCardFooterActionOptions": {
                 "exampleImages": "פתח תמונות דוגמה",
@@ -919,6 +971,11 @@
                 "random": "אקראי",
                 "randomAction": "ערבוב אקראי"
             },
+            "modelType": {
+                "title": "סנן לפי סוג מודל",
+                "all": "כל הסוגים",
+                "multiple": "{count} סוגים"
+            },
             "refresh": {
                 "title": "רענן רשימת מודלים",
                 "full": "בניית מטמון מחדש",
@@ -1041,6 +1098,9 @@
     },
     "recipes": {
         "title": "מתכוני LoRA",
+        "filter": {
+            "countTitle": "{name} — {count} מתכונים"
+        },
         "actions": {
             "sendCheckpoint": "שלח ל-ComfyUI",
             "sendRecipe": "שלח ל-ComfyUI",
@@ -1418,7 +1478,8 @@
             "notEmptyMessageCount": "בתיקייה זו עדיין יש {count} קובצי מודלים. מחק או העבר אותם תחילה — מחיקת תיקייה לעולם אינה מוחקת קובצי מודלים.",
             "notEmptyMessageExcluded": "בתיקייה זו עדיין יש {count} קובצי מודלים, שמהם {excluded} מוחרגים מהספרייה. בטל את ההחרגה ב«ניהול מודלים מוחרגים» ומחק אותם תחילה — מחיקת תיקייה לעולם אינה מוחקת קובצי מודלים.",
             "missingTitle": "התיקייה לא נמצאה",
-            "missingMessage": "תיקייה זו אינה קיימת עוד בדיסק. רענן את סרגל הצד ונסה שוב.",
+            "missingMessage": "תיקייה זו אינה קיימת עוד בדיסק. ניתן להסיר אותה מהרשימה.",
+            "removeFromList": "הסר מהרשימה",
             "symlinkTitle": "התיקייה היא קישור סמלי",
             "symlinkMessage": "כל העותקים של תיקייה זו הם קישורים סמליים; מחק את הקישור או את היעד שלו מחוץ ל-LoRA Manager.",
             "protectedTitle": "תיקייה מוגנת",
@@ -1440,6 +1501,8 @@
             "busy": "מחיקה עדיין ממתינה בתיקייה זו. המתן לסיום חלון הביטול.",
             "unsupported": "מחיקת תיקיות אינה נתמכת בדף זה",
             "missing": "תיקייה זו אינה קיימת עוד בדיסק. רענן את סרגל הצד ונסה שוב.",
+            "forgotten": "התיקייה \"{name}\" הוסרה מהרשימה",
+            "exists": "התיקייה חזרה לדיסק. מחק אותה במקום זאת.",
             "symlink": "תיקייה זו היא קישור סמלי; לא ניתן למחוק אותה מסרגל הצד.",
             "successMulti": "התיקייה \"{name}\" נמחקה מ-{count} שורשי מודלים",
             "partial": "נמחקו {count} מתוך {total} עותקים — {failed} לא נמחקו. רענן את סרגל הצד ונסה שוב."
@@ -1629,6 +1692,10 @@
             "routingOverride": {
                 "label": "סוג יעד:",
                 "tooltip": "זוהה אוטומטית ממטא-נתוני המודל. החלף אם הזיהוי שגוי; החלפה מכבה את «השתמש בנתיב ברירת מחדל» עבור הורדה זו."
+            },
+            "routedByRule": {
+                "baseModel": "נותב לפי כלל: מודל בסיס «{value}»",
+                "tag": "נותב לפי כלל: תגית «{value}»"
             },
             "targetFolderPath": "נתיב תיקיית יעד:",
             "browseFolders": "דפדף בתיקיות:",
@@ -2277,7 +2344,8 @@
             "embeddingAdded": "Embedding נוסף ל-workflow",
             "embeddingFailed": "הוספת Embedding נכשלה",
             "promptSent": "פרומפט נשלחה ל-workflow",
-            "promptFailed": "שליחת הפרומפט נכשלה"
+            "promptFailed": "שליחת הפרומפט נכשלה",
+            "nodeTypeExcluded": "סוג הצומת \"{type}\" הוחרג מיעדי השליחה"
         },
         "nodeSelector": {
             "recipe": "מתכון",
@@ -2287,7 +2355,8 @@
             "replace": "החלף",
             "append": "הוסף",
             "selectTargetNode": "בחר צומת יעד",
-            "sendToAll": "שלח לכל"
+            "sendToAll": "שלח לכל",
+            "excludeNodeType": "לא להציע שוב סוג צומת זה"
         },
         "exampleImages": {
             "opened": "תיקיית תמונות הדוגמה נפתחה",

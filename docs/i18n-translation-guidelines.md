@@ -203,6 +203,31 @@ Locales: `en`, `zh-CN`, `zh-TW`, `ja`, `ko`, `fr`, `de`, `es`, `ru`, `he` (RTL).
 > terminology was introduced. All 9 locales are translated, so the "no remaining
 > placeholders" claim holds again.
 
+> **Status (2026-10, download root rules):** the Download Root Rules editor (Settings →
+> Organization, per model type) routes downloads to a non-default root by base model or tag
+> match, and the download modal names the rule that matched. That added 26 keys —
+> `settings.downloadRootRules.*` (24) and `modals.download.routedByRule.baseModel` /
+> `.tag` — translated in all 9 locales (terminology in §2, "Download root rules
+> feature"). One source fix came with the pass: `summary.selectBaseModels` /
+> `summary.enterTags` used U+2026 `…`, which violates R7, so `en.json` now uses ASCII
+> `...` (the JS fallback strings in `SettingsManager.js` moved with it). The `…` in
+> `truncateMiddlePath` stays — it is a code-level path-elision character, not a locale
+> string. No remaining `[TODO: Translate]` placeholders.
+
+> **Status (2026-10, filter count tooltips):** the counted chips of the filter panel, the
+> All Types dropdown options and the Refresh scope rows gained an **always-on** hover string
+> carrying the full name plus the exact count (`{name} — {count} models`, and
+> `recipes.filter.countTitle` on the Recipes page, whose chips count recipes). The hover text
+> is deliberately not tied to whether the on-screen number was abbreviated — an affordance
+> that exists only above a threshold is undiscoverable, and the name is what CSS ellipsizes on
+> a narrow chip. The abbreviation itself starts at 10,000 and is used **only where the
+> locale's `Intl` compact form is a real unit and narrower than the plain number**: German has
+> no compact unit below a million, so it keeps `18.475` rather than the rounded `18.500`, and
+> Russian keeps `18 475` rather than the wider `18,5 тыс.` (rule and rationale in
+> `static/js/utils/formatters.js`). The same pass translated the 4 leftover
+> `sidebar.deleteFolder*` placeholders (folder missing on disk → remove from list), so no
+> `[TODO: Translate]` remains in any locale.
+
 ---
 
 ## 1. Hard rules (do not violate)
@@ -694,6 +719,41 @@ directly (model-type names, R3). The tooltip quotes the `modals.download.useDefa
 label verbatim with each locale's UI-label quoting style (zh-CN “ ”, zh-TW/ja 「 」,
 ko `' '`, fr « … », de „ … “, es/ru/he «…»).
 
+### Download root rules feature (per-type routing by base model / tag)
+
+The settings Library tab hosts an ordered rule list per model type
+(`settings.downloadRootRules.*`) that sends a download to a non-default root folder when
+the model's base model or tags match; the download modal names the rule that matched
+(`modals.download.routedByRule.*`). Rules are checked in order, the **first match wins**,
+and unmatched downloads fall back to the default root. "Routing" itself reuses the
+Download routing feature row above (zh 路由, ja 振り分け, ko 라우팅, …).
+
+| Term | Rendering |
+|---|---|
+| rule | zh-CN 规则 · zh-TW 規則 · ja ルール · ko 규칙 · fr règle · de Regel · es regla · ru правило · he כלל |
+| root (folder) | reuse each locale's `sidebar.modelRoot` noun: zh-CN 根目录 · zh-TW 根目錄 · ja ルート · ko 루트 · fr racine · de Stammordner · es raíz · ru корневая папка · he שורש |
+| default root | zh-CN 默认根目录 · zh-TW 預設根目錄 · ja デフォルトルート · ko 기본 루트 · fr racine par défaut · de Standard-Stammordner · es raíz predeterminada · ru корневая папка по умолчанию · he שורש ברירת המחדל |
+| first match wins | zh-CN 首个命中的规则生效 · zh-TW 首個命中的規則生效 · ja 最初に一致したルールが適用 · ko 첫 번째로 일치하는 규칙이 적용 · fr la première correspondance l’emporte · de der erste Treffer gewinnt · es gana la primera coincidencia · ru срабатывает первое совпадение · he ההתאמה הראשונה מנצחת |
+| unmatched (downloads) | zh-CN 未匹配 · zh-TW 未匹配 · ja 一致しない · ko 일치하지 않는 · fr sans correspondance · de ohne Treffer · es sin coincidencia · ru без совпадения · he ללא התאמה |
+| routed by rule | zh-CN 已由规则路由 · zh-TW 已由規則路由 · ja ルールで振り分け · ko 규칙에 따라 라우팅됨 · fr routé par règle · de per Regel geroutet · es enrutado por regla · ru маршрут по правилу · he נותב לפי כלל |
+
+- The match-type **chips** are tiny badges: `BM` stays Latin everywhere; the tag chip uses
+  the short tag noun (zh-CN 标签, zh-TW 標籤, ja タグ, ko 태그, fr/de Tag, ru Тег,
+  he תגית). **es uses `Tag` on the chip** (not "etiqueta") because the full noun
+  overflows the badge — the full term "Etiqueta" still appears in the `matchTypes.tag`
+  tooltip.
+- `types.*` are model-type names (R3) and `tagPlaceholder` is an example token list (§6):
+  both stay byte-identical to `en.json` in every locale.
+- `summary.*` are fragments inside the collapsed-row button — no trailing period, ASCII
+  `...` per R7. `summary.more` joins after the first two matches as `a, b, <more>`;
+  `{count}` may move (ru «ещё {count}», ja 「他 {count} 件」, zh-CN 还有 {count} 项,
+  zh-TW 還有 {count} 項).
+- `routedByRule.*` quote the matched value with each locale's UI-label quoting style
+  (zh-CN “ ”, zh-TW/ja 「 」, ko `' '`, fr « … », de „ … “, es/ru/he «…»).
+- Colon style in `defaultHint` / `saveFailed` / `routedByRule` follows each file's
+  existing majority: full-width `：` for zh-CN/zh-TW/ja, ASCII `:` for ko and the
+  Latin/Cyrillic/Hebrew locales (fr keeps its space before `:`).
+
 ### OpenModelDB feature
 
 **OpenModelDB** is a brand name and stays Latin in every locale (R3, same as CivitAI /
@@ -790,6 +850,25 @@ count, `(5/10)`). `{count}` is substituted with an already-formatted number
 files the walk looked at**, not every file on disk — the noun mirrors each locale's
 `stages.count_models` rendering, and `ru` uses the `файл(ов)` form because the count ticks
 live and can be any number (`notEmptyMessageCount` precedent).
+
+### Filter count tooltips (hover text of counted chips / options / rows)
+
+The number shown in a filter-panel chip, an All Types option or a Refresh scope row is
+abbreviated from 10,000 up (above); its tooltip is **always** present and always exact, because
+it also repeats the label that CSS may have ellipsized. Shape: `{name} — {count} <noun>` — the
+two keys differ only in the noun, so a locale's word order for the count (ko `모델 {count}개`)
+is applied once and reused. Dash follows the `sidebar.folderRoot.*Status` precedent: CJK uses
+`——`, all other locales `—`. "models" reuses each locale's `loras.controls.refresh.rootModels`
+noun; "recipes" uses the R4 noun in its plain plural (fr keeps `Recipes`).
+
+| Term | Rendering |
+|---|---|
+| `header.filter.countTitle` ("{name} — {count} models") | zh-CN {name} —— {count} 个模型 · zh-TW {name} —— {count} 個模型 · ja {name} —— {count} 個のモデル · ko {name} —— 모델 {count}개 · fr {name} — {count} modèles · de {name} — {count} Modelle · es {name} — {count} modelos · ru {name} — {count} модел(ей) · he {name} — {count} מודלים |
+| `recipes.filter.countTitle` ("{name} — {count} recipes") | zh-CN {name} —— {count} 个配方 · zh-TW {name} —— {count} 個配方 · ja {name} —— {count} 件のレシピ · ko {name} —— 레시피 {count}개 · fr {name} — {count} Recipes · de {name} — {count} Rezepte · es {name} — {count} recetas · ru {name} — {count} рецепт(ов) · he {name} — {count} מתכונים |
+
+Both keys are passed a pre-formatted count (`formatCountExact`), so no locale adds its own
+digit grouping; `ko` needs no `의` because the count follows the noun directly, as in
+`rootModels`.
 
 ---
 
