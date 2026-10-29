@@ -47,6 +47,30 @@ class PersistedCacheData:
 DEFAULT_LICENSE_FLAGS = 127  # 127 (0b1111111) encodes default CivitAI permissions with all commercial modes enabled.
 
 
+def _json_list_or_none(value: Any) -> Optional[str]:
+    """Encode a list field as JSON for storage; keep None as NULL."""
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
+
+
+def _json_list_from_row(value: Any) -> List[Any]:
+    """Decode a JSON list column back into a list (empty on bad data)."""
+
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    try:
+        decoded = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return decoded if isinstance(decoded, list) else []
+
+
 class PersistentModelCache:
     """Persist core model metadata and hash index data in SQLite."""
 
@@ -89,6 +113,11 @@ class PersistentModelCache:
         "source_model_id",
         "source_version_id",
         "file_bytes",
+        "workflow_format",
+        "node_count",
+        "node_classes",
+        "model_refs",
+        "civitai_refs",
     )
     _MODEL_UPDATE_COLUMNS: Tuple[str, ...] = _MODEL_COLUMNS[2:]
     _instances: Dict[str, "PersistentModelCache"] = {}
@@ -239,6 +268,12 @@ class PersistentModelCache:
                 "source_version_id": row["source_version_id"] or "",
                 "file_bytes": row["file_bytes"] or 0,
             }
+            if model_type == "workflow":
+                item["workflow_format"] = row["workflow_format"] or ""
+                item["node_count"] = row["node_count"] or 0
+                item["node_classes"] = _json_list_from_row(row["node_classes"])
+                item["model_refs"] = _json_list_from_row(row["model_refs"])
+                item["civitai_refs"] = _json_list_from_row(row["civitai_refs"])
             # Legacy rows only carry `hf_url`; derive the canonical pair so
             # every consumer sees the same shape.
             normalize_metadata_source(item)
@@ -664,6 +699,11 @@ class PersistentModelCache:
                             source_model_id TEXT DEFAULT '',
                             source_version_id TEXT DEFAULT '',
                             file_bytes INTEGER DEFAULT 0,
+                            workflow_format TEXT DEFAULT '',
+                            node_count INTEGER DEFAULT 0,
+                            node_classes TEXT,
+                            model_refs TEXT,
+                            civitai_refs TEXT,
                             PRIMARY KEY (model_type, file_path)
                         );
 
@@ -738,6 +778,12 @@ class PersistentModelCache:
             "file_bytes": "INTEGER DEFAULT 0",
             "autov3": "TEXT",
             "quantization": "TEXT",
+            # Workflow-specific analysis fields (JSON lists for the *_refs classes).
+            "workflow_format": "TEXT DEFAULT ''",
+            "node_count": "INTEGER DEFAULT 0",
+            "node_classes": "TEXT",
+            "model_refs": "TEXT",
+            "civitai_refs": "TEXT",
         }
 
         for column, definition in required_columns.items():
@@ -836,6 +882,11 @@ class PersistentModelCache:
             item.get("source_model_id") or "",
             item.get("source_version_id") or "",
             int(item.get("file_bytes") or 0),
+            item.get("workflow_format") or "",
+            int(item.get("node_count") or 0),
+            _json_list_or_none(item.get("node_classes")),
+            _json_list_or_none(item.get("model_refs")),
+            _json_list_or_none(item.get("civitai_refs")),
         )
 
     def _insert_model_sql(self) -> str:

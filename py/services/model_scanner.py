@@ -101,6 +101,7 @@ PAGE_TYPE_MAP = {
     'checkpoint': 'checkpoints',
     'embedding': 'embeddings',
     'other': 'other',
+    'workflow': 'workflows',
 }
 
 # Case-insensitive cache matching is a Windows-only safety net (NTFS treats
@@ -632,6 +633,7 @@ def _walk_root_for_reconcile(
     expected_folder_of: Callable[[str], str],
     walk_path: Optional[str] = None,
     unreachable: Optional[_UnreachablePaths] = None,
+    filename_filter: Optional[Callable[[str], bool]] = None,
 ) -> _RootWalkResult:
     """Walk one model root and classify every model file found.
 
@@ -713,6 +715,8 @@ def _walk_root_for_reconcile(
         for file in files:
             ext = os.path.splitext(file)[1].lower()
             if ext not in file_extensions:
+                continue
+            if filename_filter is not None and not filename_filter(file):
                 continue
 
             result.files_seen += 1
@@ -849,23 +853,23 @@ class CollectedScan:
 
 class ModelScanner:
     """Base service for scanning and managing model files"""
-    
+
     _instances = {}  # Dictionary to store instances by class
     _locks = {}  # Dictionary to store locks by class
-    
+
     def __new__(cls, *args, **kwargs):
         """Implement singleton pattern for each subclass"""
         if cls not in cls._instances:
             cls._instances[cls] = super().__new__(cls)
         return cls._instances[cls]
-    
+
     @classmethod
     def _get_lock(cls):
         """Get or create a lock for this class"""
         if cls not in cls._locks:
             cls._locks[cls] = asyncio.Lock()
         return cls._locks[cls]
-    
+
     @classmethod
     async def get_instance(cls):
         """Get singleton instance with async support"""
@@ -874,10 +878,10 @@ class ModelScanner:
             if cls not in cls._instances:
                 cls._instances[cls] = cls()  # pyright: ignore[reportCallIssue]
             return cls._instances[cls]
-    
+
     def __init__(self, model_type: str, model_class: Type[BaseModelMetadata], file_extensions: Set[str], hash_index: Optional[ModelHashIndex] = None):
         """Initialize the scanner
-        
+
         Args:
             model_type: Type of model (lora, checkpoint, etc.)
             model_class: Class used to create metadata instances
@@ -887,7 +891,7 @@ class ModelScanner:
         # Ensure initialization happens only once per instance
         if hasattr(self, '_initialized'):
             return
-            
+
         self.model_type = model_type
         self.model_class = model_class
         self.file_extensions = file_extensions
@@ -1235,11 +1239,25 @@ class ModelScanner:
         sub_type = get_value('sub_type', None)
         if sub_type:
             entry['sub_type'] = sub_type
-        
+
         # Handle hash_status for lazy hash calculation (checkpoints)
         hash_status = get_value('hash_status', 'completed')
         if hash_status:
             entry['hash_status'] = hash_status
+
+        # Workflow analysis fields (workflows only): copied through whenever
+        # the source carries them so the cache and API expose the parsed graph
+        # summary; other model types never define these keys.
+        for key in (
+            'workflow_format',
+            'node_count',
+            'node_classes',
+            'model_refs',
+            'civitai_refs',
+        ):
+            value = get_value(key, None)
+            if value is not None:
+                entry[key] = value
 
         return entry
 
@@ -1296,15 +1314,15 @@ class ModelScanner:
                     folders=[],
                     name_display_mode=self._name_display_mode,
                 )
-            
+
             # Set initializing flag to true
             self._is_initializing = True
             # Clear any previous failure so a retry starts from a clean slate
             self._init_error = None
-            
+
             # Determine the page type based on model type
             page_type = self.page_type
-            
+
             # First, try to load from cache
             await ws_manager.broadcast_init_progress({
                 'stage': 'loading_cache',
@@ -1344,7 +1362,7 @@ class ModelScanner:
                 'scanner_type': self.model_type,
                 'pageType': page_type
             })
-            
+
             # Single pre-scan walk (in a thread): records both the file list
             # the processing phase will consume and the total for progress.
             loop = asyncio.get_event_loop()
@@ -1387,9 +1405,9 @@ class ModelScanner:
                 'scanner_type': self.model_type,
                 'pageType': page_type
             })
-            
+
             logger.info(f"{self.model_type.capitalize()} cache initialized in {time.time() - start_time:.2f} seconds. Found {len(self._cache.raw_data)} models")
-            
+
             # Send completion message
             await asyncio.sleep(0.5)  # Small delay to ensure final progress message is sent
             await ws_manager.broadcast_init_progress({
@@ -1400,7 +1418,7 @@ class ModelScanner:
                 'scanner_type': self.model_type,
                 'pageType': page_type
             })
-            
+
         except Exception as e:
             logger.error(f"{self.model_type.capitalize()} Scanner: Error initializing cache in background: {e}")
             self._init_error = str(e)
@@ -1423,7 +1441,7 @@ class ModelScanner:
         finally:
             # Always clear the initializing flag when done
             self._is_initializing = False
-    
+
     async def _load_persisted_cache(self, page_type: str) -> bool:
         """Attempt to hydrate the in-memory cache from the SQLite snapshot.
 
@@ -1726,6 +1744,8 @@ class ModelScanner:
                                 # SHA256 of incomplete content.
                                 if os.path.exists(f"{entry.path}.aria2"):
                                     continue
+                                if not self._is_indexable_filename(entry.name):
+                                    continue
                                 real_file_path = os.path.realpath(entry.path)
                                 if real_file_path in seen_real_files:
                                     continue
@@ -1868,7 +1888,7 @@ class ModelScanner:
         scope: Optional[ReconcileScope] = None,
     ) -> ModelCache:
         """Get cached model data, refresh if needed
-        
+
         Args:
             force_refresh: Whether to refresh the cache
             rebuild_cache: Whether to completely rebuild the cache
@@ -1886,12 +1906,15 @@ class ModelScanner:
 
         # If force refresh is requested, initialize the cache directly
         if force_refresh:
-            if rebuild_cache:
+            # A reconcile diffs against the existing cache; when there is no
+            # cache yet (e.g. a scan fired while background initialization is
+            # still deferred), a full initialization is the only option.
+            if rebuild_cache or self._cache is None:
                 self._last_reconcile_summary = None
                 await self._initialize_cache()
             else:
                 self._last_reconcile_summary = await self._reconcile_cache(scope=scope)
-        
+
         return cast(ModelCache, self._cache)
 
     @property
@@ -2150,7 +2173,7 @@ class ModelScanner:
             logger.info(f"{self.model_type.capitalize()} Scanner: Starting fast cache reconciliation...")
 
             await self._broadcast_scan_progress('started', 'reconcile_scan', 0, False)
-            
+
             # Get current cached file paths
             cached_size_before = len(self._cache.raw_data)
             cached_paths = {item['file_path'] for item in self._cache.raw_data}
@@ -2363,7 +2386,7 @@ class ModelScanner:
                                 if normalized_path.startswith(os.path.normpath(potential_root)):
                                     root_path = potential_root
                                     break
-                            
+
                             if root_path:
                                 model_data = await self._process_model_file(path, root_path)
                                 if model_data:
@@ -2396,12 +2419,12 @@ class ModelScanner:
                                             model_data['file_path'],
                                             model_data.get('autov3') or None
                                         )
-                                    
+
                                     # Update tags count
                                     if 'tags' in model_data and model_data['tags']:
                                         for tag in model_data['tags']:
                                             self._tags_count[tag] = self._tags_count.get(tag, 0) + 1
-                                            
+
                                     total_added += 1
                             else:
                                 logger.error(f"Could not determine root path for {path}")
@@ -2511,10 +2534,10 @@ class ModelScanner:
                     continue
                 missing_files.add(path)
             total_removed = 0
-            
+
             if missing_files:
                 logger.info(f"{self.model_type.capitalize()} Scanner: Found {len(missing_files)} files to remove from cache")
-                
+
                 # Process files to remove
                 for path in missing_files:
                     try:
@@ -2528,16 +2551,16 @@ class ModelScanner:
                                 self._tags_count[tag] = max(0, self._tags_count[tag] - 1)
                                 if self._tags_count[tag] == 0:
                                     del self._tags_count[tag]
-                        
+
                         # Remove from hash index
                         self._hash_index.remove_by_path(path)
                         total_removed += 1
                     except Exception as e:
                         logger.error(f"Error removing {path} from cache: {e}")
-                
+
                 # Update cache data
                 self._cache.raw_data = [item for item in self._cache.raw_data if item['file_path'] not in missing_files]
-            
+
             # Defensive integrity pass: drop entries sharing a business path.
             # Duplicates can only be introduced by external code rewriting
             # raw_data directly or by this pass's own appends, so an unchanged
@@ -2564,7 +2587,7 @@ class ModelScanner:
                 if dedup_removed > 0:
                     self._cache.raw_data = list(reversed(deduped))
                     total_removed += dedup_removed
-            
+
             # The walk above visited every directory *in scope*, so refresh the
             # recorded folder list (including empty folders) when this run could
             # speak for every root: e.g. an empty folder was created or removed
@@ -2623,7 +2646,7 @@ class ModelScanner:
                 await self._persist_current_cache()
             elif folders_changed:
                 await self._persist_current_cache()
-                
+
             summary: Dict[str, Any] = {
                 'added': total_added,
                 'removed': total_removed,
@@ -2771,6 +2794,7 @@ class ModelScanner:
                     report_progress=report_progress,
                     expected_folder_of=expected_folder_of,
                     unreachable=unreachable,
+                    filename_filter=self._is_indexable_filename,
                 )
             finally:
                 tracker.finish_root(root_path)
@@ -2834,7 +2858,7 @@ class ModelScanner:
     def is_initializing(self) -> bool:
         """Check if the scanner is currently initializing"""
         return self._is_initializing
-    
+
     def cancel_task(self) -> None:
         """Request cancellation of the current long-running task."""
         self._cancel_requested = True
@@ -2847,7 +2871,7 @@ class ModelScanner:
     def is_cancelled(self) -> bool:
         """Check if cancellation has been requested."""
         return self._cancel_requested
-    
+
     def get_model_roots(self) -> List[str]:
         """Get model root directories"""
         raise NotImplementedError("Subclasses must implement get_model_roots")
@@ -3441,11 +3465,11 @@ class ModelScanner:
                     discovered.add(rel_dir)
 
         return sorted(discovered, key=lambda x: x.lower())
-    
+
     async def _create_default_metadata(self, file_path: str) -> Optional[BaseModelMetadata]:
         """Get model file info and metadata (extensible for different model types)"""
         return await MetadataManager.create_default_metadata(file_path, self.model_class)
-    
+
     def _calculate_folder(self, file_path: str, roots: Optional[List[str]] = None) -> str:
         """Return the library-relative folder holding *file_path*.
 
@@ -3487,6 +3511,15 @@ class ModelScanner:
     def adjust_metadata(self, metadata, file_path, root_path):
         """Hook for subclasses: adjust metadata during scanning"""
         return metadata
+
+    def _is_indexable_filename(self, filename: str) -> bool:
+        """Hook for subclasses: whether a matching-extension file is indexable.
+
+        Scanners whose extension set collides with sidecar formats (e.g. the
+        workflow scanner's ``.json`` vs ``.metadata.json``) override this to
+        keep sidecars out of the library walk.
+        """
+        return True
 
     def adjust_cached_entry(self, entry: Dict[str, Any]) -> Dict[str, Any]:
         """Hook for subclasses: adjust entries loaded from the persisted cache."""
@@ -3571,19 +3604,19 @@ class ModelScanner:
             return None
 
         metadata, should_skip = await MetadataManager.load_metadata(file_path, self.model_class)
-    
+
         if should_skip:
             # Metadata file exists but cannot be parsed - skip this model
             logger.warning(f"Skipping model {file_path} due to corrupted metadata file")
             return None
-        
+
         if metadata is None:
             civitai_info_path = f"{os.path.splitext(file_path)[0]}.civitai.info"
             if os.path.exists(civitai_info_path):
                 try:
                     with open(civitai_info_path, 'r', encoding='utf-8') as f:
                         version_info = json.load(f)
-                    
+
                     file_info = next((f for f in version_info.get('files', []) if f.get('primary')), None)
                     if file_info:
                         local_stem = os.path.splitext(os.path.basename(file_path))[0]
@@ -3608,26 +3641,26 @@ class ModelScanner:
                     try:
                         with open(civitai_info_path, 'r', encoding='utf-8') as f:
                             version_info = json.load(f)
-                        
+
                         logger.debug(f"Restoring missing civitai data from .civitai.info for {file_path}")
                         metadata.civitai = version_info
-                        
+
                         # Ensure tags are also updated if they're missing
                         if (not metadata.tags or len(metadata.tags) == 0) and 'model' in version_info:
                             if 'tags' in version_info['model']:
                                 metadata.tags = version_info['model']['tags']
-                        
+
                         # Also restore description if missing
                         if (not metadata.modelDescription or metadata.modelDescription == "") and 'model' in version_info:
                             if 'description' in version_info['model']:
                                 metadata.modelDescription = version_info['model']['description']
-                        
+
                         # Save the updated metadata
                         await MetadataManager.save_metadata(file_path, metadata)
                         logger.debug(f"Updated metadata with civitai info for {file_path}")
                     except Exception as e:
                         logger.error(f"Error restoring civitai data from .civitai.info for {file_path}: {e}")
-            
+
         if metadata is None:
             metadata = await self._create_default_metadata(file_path)
 
@@ -3641,7 +3674,7 @@ class ModelScanner:
 
         # Hook: allow subclasses to adjust metadata
         metadata = self.adjust_metadata(metadata, file_path, root_path)
-        
+
         rel_path = os.path.relpath(file_path, root_path)
         folder = os.path.dirname(rel_path)
         normalized_folder = folder.replace(os.path.sep, '/')
@@ -3953,7 +3986,7 @@ class ModelScanner:
         Args:
             metadata_dict: The model metadata dictionary
             folder: The relative folder path for the model
-            
+
         Returns:
             bool: True if successful, False otherwise
         """
@@ -3996,7 +4029,7 @@ class ModelScanner:
             self._cache.raw_data.append(metadata_dict)
 
             await self._cache.resort()
-            
+
             # Update the hash index
             self._hash_index.add_entry(
                 metadata_dict['sha256'],
@@ -4012,7 +4045,7 @@ class ModelScanner:
         except Exception as e:
             logger.error(f"Error adding model to cache: {e}")
             return False
-    
+
     async def move_model(self, source_path: str, target_path: str) -> Optional[Dict[str, Any]]:
         """Move a model and its associated files to a new location
 
@@ -4041,31 +4074,31 @@ class ModelScanner:
     async def _move_model_locked(self, source_path: str, target_path: str) -> Optional[Dict[str, Any]]:
         try:
             file_ext = os.path.splitext(source_path)[1]
-            
+
             if not file_ext or file_ext.lower() not in self.file_extensions:
                 logger.error(f"Invalid file extension for model: {file_ext}")
                 return None
-                
+
             base_name = os.path.splitext(os.path.basename(source_path))[0]
             source_dir = os.path.dirname(source_path)
 
             _require_path_in_library_roots(source_path, self, label="Source path")
             _require_path_in_library_roots(target_path, self, label="Target path")
-            
+
             os.makedirs(target_path, exist_ok=True)
-            
+
             def get_source_hash():
                 return self.get_hash_by_path(source_path)
-            
+
             # Check for filename conflicts and auto-rename if necessary
             from ..utils.models import BaseModelMetadata
             final_filename = BaseModelMetadata.generate_unique_filename(
                 target_path, base_name, file_ext, lambda: get_source_hash() or ""
             )
-            
+
             target_file = os.path.join(target_path, final_filename).replace(os.sep, '/')
             final_base_name = os.path.splitext(final_filename)[0]
-            
+
             # Log if filename was changed due to conflict
             if final_filename != f"{base_name}{file_ext}":
                 logger.info(f"Renamed {base_name}{file_ext} to {final_filename} to avoid filename conflict")
@@ -4084,7 +4117,7 @@ class ModelScanner:
                 return await self._reconcile_already_moved(source_path, [target_file, natural_target])
 
             shutil.move(move_source, move_target)
-            
+
             # Move all associated files with the same base name
             source_metadata = None
             moved_metadata_path = None
@@ -4137,7 +4170,7 @@ class ModelScanner:
                     metadata = await self._update_metadata_paths(moved_metadata_path, target_file)
                 except Exception as e:
                     logger.error(f"Error moving metadata file: {e}")
-            
+
             if metadata is not None:
                 # sub_type is derived from the model's location (e.g. a file
                 # moved from a checkpoints root into a unet root becomes a
@@ -4153,12 +4186,12 @@ class ModelScanner:
                         logger.error(f"Error persisting sub_type for moved model: {e}")
 
             update_result = await self.update_single_model_cache(source_path, target_file, metadata, recalculate_type=True)
-            
+
             return {
                 "new_path": target_file,
                 "cache_entry": update_result if isinstance(update_result, dict) else None
             }
-            
+
         except Exception as e:
             logger.error(f"Error moving model: {e}", exc_info=True)
             return None
@@ -4231,11 +4264,11 @@ class ModelScanner:
         try:
             with open(metadata_path, 'r', encoding='utf-8') as f:
                 metadata = json.load(f)
-            
+
             metadata['file_path'] = model_path.replace(os.sep, '/')
             # Update file_name to match the new filename
             metadata['file_name'] = os.path.splitext(os.path.basename(model_path))[0]
-            
+
             if 'preview_url' in metadata and metadata['preview_url']:
                 preview_dir = get_preview_dir(model_path)
                 # Update preview filename to match the new base name
@@ -4243,11 +4276,11 @@ class ModelScanner:
                 preview_ext = get_preview_extension(metadata['preview_url'])
                 new_preview_path = os.path.join(preview_dir, f"{new_base_name}{preview_ext}")
                 metadata['preview_url'] = new_preview_path.replace(os.sep, '/')
-            
+
             await MetadataManager.save_metadata(metadata_path, metadata)
 
             return metadata
-                
+
         except Exception as e:
             logger.error(f"Error updating metadata paths: {e}", exc_info=True)
             return None
@@ -4343,7 +4376,7 @@ class ModelScanner:
                     self._tags_count[tag] = max(0, self._tags_count[tag] - 1)
                     if self._tags_count[tag] == 0:
                         del self._tags_count[tag]
-        
+
         self._hash_index.remove_by_path(original_path)
 
         if deferred:
@@ -4435,7 +4468,7 @@ class ModelScanner:
         if metadata and cache_entry is not None:
             return cache_entry
         return True
-        
+
     async def sync_cache_from_metadata(
         self, file_path: str, metadata_dict: Dict[str, Any]
     ) -> bool:
@@ -4802,28 +4835,28 @@ class ModelScanner:
     def has_hash(self, sha256: str) -> bool:
         """Check if a model with given hash exists"""
         return self._hash_index.has_hash(sha256.lower())
-        
+
     def get_path_by_hash(self, sha256: str) -> Optional[str]:
         """Get file path for a model by its hash"""
         return self._hash_index.get_path(sha256.lower())
-        
+
     def get_hash_by_path(self, file_path: str) -> Optional[str]:
         """Get hash for a model by its file path"""
         if self._cache is None or not self._cache.raw_data:
             return None
-            
+
         # Iterate through cache data to find matching file path
         for model_data in self._cache.raw_data:
             if model_data.get('file_path') == file_path:
                 return model_data.get('sha256')
-        
+
         return None
-    
+
     def get_hash_by_filename(self, filename: str) -> Optional[str]:
         """Get hash for a model by its filename without path"""
         return self._hash_index.get_hash_by_filename(filename)
 
-    # TODO: Adjust this method to use metadata instead of finding the file    
+    # TODO: Adjust this method to use metadata instead of finding the file
     def get_preview_url_by_hash(self, sha256: str) -> Optional[str]:
         """Get preview static URL for a model by its hash"""
         file_path = self._hash_index.get_path(sha256.lower())
@@ -4837,17 +4870,17 @@ class ModelScanner:
             return config.get_preview_static_url(preview_path)
 
         return None
-        
+
     async def get_top_tags(self, limit: int = 20) -> List[Dict[str, Any]]:
         """Get top tags sorted by count. If limit is 0, return all tags."""
         await self.get_cached_data()
-        
+
         sorted_tags = sorted(
             [{"tag": tag, "count": count} for tag, count in self._tags_count.items()],
             key=lambda x: x['count'],
             reverse=True
         )
-        
+
         if limit == 0:
             return sorted_tags
         return sorted_tags[:limit]
@@ -4880,20 +4913,20 @@ class ModelScanner:
     async def get_base_models(self, limit: int = 20) -> List[Dict[str, Any]]:
         """Get base models sorted by count. If limit is 0, return all."""
         cache = await self.get_cached_data()
-        
+
         base_model_counts = {}
         for model in cache.raw_data:
             if 'base_model' in model and model['base_model']:
                 base_model = model['base_model']
                 base_model_counts[base_model] = base_model_counts.get(base_model, 0) + 1
-        
+
         sorted_models = [{'name': model, 'count': count} for model, count in base_model_counts.items()]
         sorted_models.sort(key=lambda x: x['count'], reverse=True)
 
         if limit == 0:
             return sorted_models
         return sorted_models[:limit]
-        
+
     @staticmethod
     def find_matching_models(
         raw_data: List[Dict[str, Any]],
@@ -5024,19 +5057,19 @@ class ModelScanner:
         except Exception as e:
             logger.error(f"Error getting model info by name: {e}", exc_info=True)
             return None
-        
+
     def get_excluded_models(self) -> List[str]:
         """Get list of excluded model file paths"""
         return self._excluded_models.copy()
 
     async def update_preview_in_cache(self, file_path: str, preview_url: str, preview_nsfw_level: int) -> bool:
         """Update preview URL in cache for a specific lora
-        
+
         Args:
             file_path: The file path of the lora to update
             preview_url: The new preview URL
             preview_nsfw_level: The NSFW level of the preview
-            
+
         Returns:
             bool: True if the update was successful, False if cache doesn't exist or lora wasn't found
         """
@@ -5050,10 +5083,10 @@ class ModelScanner:
 
     async def bulk_delete_models(self, file_paths: List[str]) -> Dict[str, Any]:
         """Delete multiple models and update cache in a batch operation
-        
+
         Args:
             file_paths: List of file paths to delete
-            
+
         Returns:
             Dict containing results of the operation
         """
@@ -5064,23 +5097,23 @@ class ModelScanner:
                     'error': 'No file paths provided for deletion',
                     'results': []
                 }
-            
+
             # Keep track of success and failures
             results = []
             total_deleted = 0
             cache_updated = False
-            
+
             # Get cache data
             cache = await self.get_cached_data()
-            
+
             # Track deleted models to update cache once
             deleted_models = []
-            
+
             # Stage each file into the pending-delete staging area and merge
             # all per-file batches into ONE batch for the whole bulk action.
             pending_delete_service = await get_pending_delete_service()
             batch_ids: List[str] = []
-            
+
             for file_path in file_paths:
                 if self.is_cancelled():
                     logger.info(f"{self.model_type.capitalize()} Scanner: Bulk delete cancelled by user")
@@ -5122,7 +5155,7 @@ class ModelScanner:
                             file_name,
                             main_extension=main_extension,
                         )
-                    
+
                     if deleted_files:
                         deleted_models.append(file_path)
                         results.append({
@@ -5157,7 +5190,7 @@ class ModelScanner:
                         'success': False,
                         'error': str(e)
                     })
-            
+
             # Merge every staged per-file batch into ONE undoable batch. On a
             # merge failure (defensive) the response falls back to the
             # constituent batch_ids array so the frontend can undo them
@@ -5169,7 +5202,7 @@ class ModelScanner:
                     batch_field['batch_id'] = merged_id
                 else:
                     batch_field['batch_ids'] = list(batch_ids)
-            
+
             # Batch update cache if any models were deleted
             if deleted_models:
                 # Update the cache in a batch operation
@@ -5202,7 +5235,7 @@ class ModelScanner:
                 else:
                     response['error'] = 'No files were deleted'
             return response
-            
+
         except Exception as e:
             logger.error(f"Error in bulk delete: {e}", exc_info=True)
             return {
@@ -5210,13 +5243,13 @@ class ModelScanner:
                 'error': str(e),
                 'results': []
             }
-    
+
     async def _batch_update_cache_for_deleted_models(self, file_paths: List[str]) -> bool:
         """Update cache after multiple models have been deleted
-        
+
         Args:
             file_paths: List of file paths that were deleted
-            
+
         Returns:
             bool: True if cache was updated and saved successfully
         """
@@ -5232,17 +5265,17 @@ class ModelScanner:
                 f"{self.model_type.capitalize()} Scanner: Applying cache update "
                 "for a bulk delete that was interrupted by cancellation"
             )
-            
+
         try:
             # Get all models that need to be removed from cache
             models_to_remove = [item for item in self._cache.raw_data if item['file_path'] in file_paths]
-            
+
             if not models_to_remove:
                 # The rows are already gone, but path-keyed index entries can
                 # survive a partially applied update. Clean them anyway.
                 self._purge_paths_from_hash_index(file_paths)
                 return False
-                
+
             # Update tag counts
             for model in models_to_remove:
                 for tag in model.get('tags', []):
@@ -5250,7 +5283,7 @@ class ModelScanner:
                         self._tags_count[tag] = max(0, self._tags_count[tag] - 1)
                         if self._tags_count[tag] == 0:
                             del self._tags_count[tag]
-            
+
             # Update hash index
             for model in models_to_remove:
                 file_path = model['file_path']
@@ -5281,7 +5314,7 @@ class ModelScanner:
             stale_paths = [path for path in file_paths if path not in {m['file_path'] for m in models_to_remove}]
             if stale_paths:
                 self._purge_paths_from_hash_index(stale_paths)
-            
+
             # Update cache data
             self._cache.raw_data = [item for item in self._cache.raw_data if item['file_path'] not in file_paths]
 
@@ -5294,7 +5327,7 @@ class ModelScanner:
             self.bump_cache_version()
 
             return True
-            
+
         except Exception as e:
             logger.error(f"Error updating cache after bulk delete: {e}", exc_info=True)
             return False
@@ -5316,19 +5349,19 @@ class ModelScanner:
 
     def _cleanup_duplicates_after_removal(self, hash_val: str, file_name: str) -> None:
         """Clean up duplicate entries in hash index after removing a model
-        
+
         Args:
             hash_val: SHA256 hash of the removed model
             file_name: File name of the removed model without extension
         """
         if not hash_val or not file_name or not hasattr(self, '_hash_index'):
             return
-            
+
         # Clean up hash duplicates if only 0 or 1 entries remain
         if hash_val in self._hash_index._duplicate_hashes:
             if len(self._hash_index._duplicate_hashes[hash_val]) <= 1:
                 del self._hash_index._duplicate_hashes[hash_val]
-        
+
         # Clean up filename duplicates if only 0 or 1 entries remain
         if file_name in self._hash_index._duplicate_filenames:
             if len(self._hash_index._duplicate_filenames[file_name]) <= 1:
@@ -5393,10 +5426,10 @@ class ModelScanner:
 
     async def get_model_versions_by_id(self, model_id: int) -> List[Dict[str, Any]]:
         """Get all versions of a model by its ID
-        
+
         Args:
             model_id: Civitai model ID
-            
+
         Returns:
             List[Dict]: List of version information dictionaries
         """
