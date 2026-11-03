@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from ..config import config
+from ..utils.constants import PREVIEW_EXTENSIONS
 from ..utils.file_utils import (
     calculate_sha256,
     find_preview_file,
@@ -30,6 +31,14 @@ logger = logging.getLogger(__name__)
 
 # Sidecar files share the .json extension; they must never enter the library.
 _SIDECAR_SUFFIXES = (".metadata.json", WORKFLOW_DOCUMENT_SUFFIX)
+
+# LM-generated preview sidecars (``<workflow>.preview.webp``) share the image
+# artifact extensions, so they must be filtered by name before the workflow
+# extraction step. Without this, a preview that embeds a workflow (e.g. one
+# written with preserve_metadata) would land in the library as a second entry.
+_PREVIEW_SUFFIXES = tuple(
+    ext for ext in PREVIEW_EXTENSIONS if ext.startswith(".preview.")
+)
 
 
 class WorkflowScanner(ModelScanner):
@@ -55,10 +64,17 @@ class WorkflowScanner(ModelScanner):
 
     def _is_indexable_filename(self, filename: str) -> bool:
         lowered = filename.lower()
-        return not lowered.endswith(_SIDECAR_SUFFIXES)
+        if lowered.endswith(_SIDECAR_SUFFIXES):
+            return False
+        # Preview assets share the artifact image extensions (.webp/.png), so
+        # a preview sidecar named "<workflow>.preview.webp" must never be
+        # indexed as an image artifact of its own.
+        if lowered.endswith(_PREVIEW_SUFFIXES):
+            return False
+        return True
 
     def get_model_roots(self) -> List[str]:
-        """Workflow roots (primary + extra), empty while the feature is off."""
+        """Return the configured workflow library root (empty while disabled)."""
         try:
             from .settings_manager import get_settings_manager
 
@@ -66,16 +82,7 @@ class WorkflowScanner(ModelScanner):
                 return []
         except Exception:  # pragma: no cover - defensive; settings unavailable
             return []
-        roots: List[str] = []
-        roots.extend(config.workflows_roots or [])
-        roots.extend(config.extra_workflows_roots or [])
-        seen: set[str] = set()
-        unique_roots: List[str] = []
-        for root in roots:
-            if root and root not in seen:
-                seen.add(root)
-                unique_roots.append(root)
-        return unique_roots
+        return [root for root in (config.workflows_roots or []) if root]
 
     @staticmethod
     def _is_image_artifact(file_path: str) -> bool:
@@ -108,15 +115,25 @@ class WorkflowScanner(ModelScanner):
         metadata.node_classes = analysis.node_classes
         metadata.model_refs = analysis.model_refs
         metadata.civitai_refs = analysis.civitai_refs
+        metadata.primary_model_refs = analysis.primary_model_refs
         return metadata
 
     async def _create_default_metadata(
-        self, file_path: str
+        self,
+        file_path: str,
+        *,
+        include_remote: bool = False,
+        checkpoint_name_hint: Optional[str] = None,
     ) -> Optional[WorkflowMetadata]:
         """Create metadata by hashing the artifact and analyzing its workflow.
 
         Returns None for files that carry no ComfyUI workflow document, so
-        they stay out of the library.
+        they stay out of the library. The base model is resolved from the
+        workflow's referenced models against the local library;
+        ``include_remote`` (one-off user actions only, never scans) also
+        allows the CivitAI URN fallback. ``checkpoint_name_hint`` names the
+        primary checkpoint observed at generation time and outranks the
+        static votes when it resolves locally.
         """
         try:
             real_path = os.path.realpath(file_path)
@@ -146,6 +163,22 @@ class WorkflowScanner(ModelScanner):
                 )
                 return None
 
+            try:
+                from .workflow_base_model import resolve_workflow_base_model
+
+                base_model = await resolve_workflow_base_model(
+                    primary_model_refs=analysis.primary_model_refs,
+                    model_refs=analysis.model_refs,
+                    civitai_refs=analysis.civitai_refs,
+                    include_remote=include_remote,
+                    checkpoint_name_hint=checkpoint_name_hint,
+                )
+            except Exception:
+                logger.debug(
+                    "Base model resolution failed for %s", file_path, exc_info=True
+                )
+                base_model = None
+
             metadata = WorkflowMetadata(
                 file_name=base_name,
                 model_name=base_name,
@@ -153,7 +186,7 @@ class WorkflowScanner(ModelScanner):
                 size=os.path.getsize(real_path),
                 modified=datetime.now().timestamp(),
                 sha256=sha256,
-                base_model="Unknown",
+                base_model=base_model or "Unknown",
                 preview_url=normalize_path(preview_url),
                 tags=[],
                 modelDescription="",
@@ -163,6 +196,7 @@ class WorkflowScanner(ModelScanner):
                 node_classes=analysis.node_classes,
                 model_refs=analysis.model_refs,
                 civitai_refs=analysis.civitai_refs,
+                primary_model_refs=analysis.primary_model_refs,
             )
 
             logger.info(f"Creating workflow metadata for {file_path}")
@@ -175,3 +209,27 @@ class WorkflowScanner(ModelScanner):
                 f"Error creating default workflow metadata for {file_path}: {e}"
             )
             return None
+
+    async def register_local_artifact(
+        self,
+        file_path: str,
+        *,
+        checkpoint_name_hint: Optional[str] = None,
+    ) -> Optional[WorkflowMetadata]:
+        """Create metadata and cache entry for a workflow written by LM.
+
+        Used by the "Create LM-managed workflow" flow: the file is already on
+        disk, so this reuses the scanner's metadata builder (analysis fields,
+        preview lookup, sidecar write) and then inserts/updates the cache entry
+        without forcing a full rescan. Being a one-off user action, base model
+        resolution here may also consult CivitAI URNs embedded in the graph.
+        ``checkpoint_name_hint`` names the primary checkpoint observed at
+        generation time and outranks the static votes when it resolves locally.
+        """
+        metadata = await self._create_default_metadata(
+            file_path, include_remote=True, checkpoint_name_hint=checkpoint_name_hint
+        )
+        if metadata is None:
+            return None
+        await self.sync_cache_from_metadata(file_path, metadata.to_dict())
+        return metadata

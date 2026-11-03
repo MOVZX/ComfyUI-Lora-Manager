@@ -637,9 +637,10 @@
             "enableOtherModels": "其他模型管理",
             "enableOtherModelsHelp": "關閉後，不會掃描 VAE / Upscaler / Text Encoder / CLIP Vision / ControlNet 資料夾，其他模型頁面會保持停用，且無法下載這些模型類型。",
             "enableWorkflows": "工作流管理",
-            "enableWorkflowsHelp": "關閉後，不會掃描工作流資料夾（folder_paths.workflows），工作流頁面會保持停用，且無法連結或下載 CivitAI 的 Workflow 資源。",
-            "workflowFolders": "工作流資料夾",
-            "workflowFoldersHelp": "掃描 ComfyUI 工作流 JSON 檔案的資料夾。僅由 LoRA Manager 管理（不與 ComfyUI 共用）；變更立即生效。",
+            "enableWorkflowsHelp": "關閉後，不會掃描工作流庫資料夾，工作流頁面會保持停用，且無法連結或下載 CivitAI 的 Workflow 資源。",
+            "workflowFolder": "工作流庫資料夾",
+            "workflowFolderHelp": "用於掃描 ComfyUI 工作流 JSON 檔案的單一資料夾。僅由 LoRA Manager 管理（不與 ComfyUI 共用）；變更立即生效。",
+            "workflowFolderPlaceholder": "/path/to/workflows",
             "otherSubTypes": "管理的模型類型",
             "otherSubTypesHelp": "選擇要在其他模型頁面中掃描和顯示的其他模型類別。",
             "subTypeVae": "VAE",
@@ -693,8 +694,7 @@
                 "text_encoders": "Text Encoder 路徑",
                 "clip": "CLIP 路徑（舊版）",
                 "clip_vision": "CLIP Vision 路徑",
-                "controlnet": "ControlNet 路徑",
-                "workflows": "工作流路徑"
+                "controlnet": "ControlNet 路徑"
             }
         },
         "directoryPicker": {
@@ -1107,11 +1107,25 @@
     "recipes": {
         "title": "LoRA 配方",
         "filter": {
+            "title": "篩選配方",
             "countTitle": "{name} —— {count} 個配方"
+        },
+        "bulk": {
+            "noSelection": "未選擇配方"
+        },
+        "move": {
+            "failed": "移動配方失敗：{message}"
+        },
+        "deleteModal": {
+            "message": "您確定要刪除此配方嗎？",
+            "note": "刪除此配方不會影響其中使用的 LoRA 檔案。",
+            "deleting": "正在刪除..."
         },
         "actions": {
             "sendCheckpoint": "傳送到 ComfyUI",
             "sendRecipe": "傳送到 ComfyUI",
+            "sendRecipeModes": "傳送配方到工作流（點擊：附加，Shift+點擊：取代）",
+            "shareRecipe": "分享配方",
             "copyRecipeSyntax": "複製配方語法",
             "deleteRecipeWithShortcut": "刪除配方（Del）"
         },
@@ -1457,11 +1471,44 @@
     },
     "workflows": {
         "title": "工作流",
+        "itemLabel": "工作流",
+        "filter": {
+            "title": "篩選工作流"
+        },
+        "bulk": {
+            "noSelection": "未選擇工作流"
+        },
         "contextMenu": {
             "sendToComfy": "在 ComfyUI 中開啟",
             "updateFromComfy": "從 ComfyUI 更新",
             "copyWorkflow": "複製工作流",
-            "restoreDownloaded": "還原已下載版本"
+            "restoreDownloaded": "還原已下載版本",
+            "moveWorkflow": "將工作流移動到資料夾",
+            "deleteWorkflow": "刪除工作流"
+        },
+        "modals": {
+            "delete": {
+                "title": "刪除工作流",
+                "message": "您確定要刪除此工作流及所有相關檔案嗎？",
+                "failed": "刪除工作流失敗：{message}"
+            },
+            "move": {
+                "title": "移動工作流",
+                "bulkTitle": "移動 {count} 個工作流",
+                "selectRoot": "選擇工作流根目錄：",
+                "targetHint": "選擇工作流根目錄",
+                "noRoots": "找不到工作流根目錄",
+                "failed": "移動工作流失敗：{message}"
+            },
+            "bulkDelete": {
+                "title": "刪除多個工作流",
+                "message": "您確定要刪除所有選取的工作流及其相關檔案嗎？",
+                "countMessage": "工作流將被永久刪除。"
+            }
+        },
+        "relink": {
+            "success": "工作流已成功重新連結至 CivitAI",
+            "civArchiveSuccess": "工作流已成功透過 CivitArchive 重新連結"
         },
         "sendToComfy": {
             "success": "工作流已傳送到 ComfyUI",
@@ -1492,14 +1539,10 @@
             "enableFailed": "啟用工作流失敗"
         },
         "noPaths": {
-            "title": "找不到工作流資料夾",
-            "descriptionStandalone": "工作流管理已開啟，但找不到工作流資料夾。請在「設定 > 模型路徑」中加入工作流資料夾，然後重新啟動 LoRA Manager。",
-            "hintStandalone": "工作流會從 folder_paths.workflows 項目讀取。",
-            "descriptionComfyUI": "工作流管理已開啟，但未設定工作流資料夾。請在「設定 > 模型庫」中加入工作流資料夾，然後重新載入此頁面。",
-            "hintComfyUI": "工作流存放在獨立的模型庫資料夾中（folder_paths.workflows）；不會影響 ComfyUI 內建的工作流清單。",
-            "openSettings": "開啟設定",
-            "openModelPaths": "設定模型資料夾",
-            "openSettingsFolder": "開啟設定資料夾"
+            "title": "未設定工作流資料夾",
+            "description": "工作流管理已開啟，但未設定工作流資料夾。請在「設定 > 模型庫」中設定工作流資料夾，然後重新載入此頁面。",
+            "hint": "工作流庫資料夾獨立於 ComfyUI 內建的工作流清單。",
+            "openSettings": "開啟設定"
         }
     },
     "sidebar": {

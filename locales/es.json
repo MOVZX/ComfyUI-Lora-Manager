@@ -637,9 +637,10 @@
             "enableOtherModels": "Gestión de otros modelos",
             "enableOtherModelsHelp": "Cuando está desactivado, las carpetas VAE / Upscaler / Text Encoder / CLIP Vision / ControlNet no se escanean, la página Otros modelos permanece desactivada y estos tipos de modelos no se pueden descargar.",
             "enableWorkflows": "Gestión de workflows",
-            "enableWorkflowsHelp": "Cuando está desactivado, las carpetas de workflows (folder_paths.workflows) no se escanean, la página Workflows permanece desactivada y los recursos Workflow de CivitAI no se pueden vincular ni descargar.",
-            "workflowFolders": "Carpetas de workflows",
-            "workflowFoldersHelp": "Carpetas que se escanean en busca de archivos JSON de workflow de ComfyUI. Gestionadas solo por LoRA Manager (no se comparten con ComfyUI); los cambios se aplican de inmediato.",
+            "enableWorkflowsHelp": "Cuando está desactivado, la carpeta de la biblioteca de workflows no se escanea, la página Workflows permanece desactivada y los recursos Workflow de CivitAI no se pueden vincular ni descargar.",
+            "workflowFolder": "Carpeta de la biblioteca de workflows",
+            "workflowFolderHelp": "La única carpeta que se escanea en busca de archivos JSON de workflow de ComfyUI. Gestionada solo por LoRA Manager (no se comparte con ComfyUI); los cambios se aplican de inmediato.",
+            "workflowFolderPlaceholder": "/path/to/workflows",
             "otherSubTypes": "Tipos de modelos gestionados",
             "otherSubTypesHelp": "Elige qué categorías de otros modelos se escanean y se muestran en la página Otros modelos.",
             "subTypeVae": "VAE",
@@ -693,8 +694,7 @@
                 "text_encoders": "Rutas de Text Encoder",
                 "clip": "Rutas de CLIP (heredadas)",
                 "clip_vision": "Rutas de CLIP Vision",
-                "controlnet": "Rutas de ControlNet",
-                "workflows": "Rutas de workflows"
+                "controlnet": "Rutas de ControlNet"
             }
         },
         "directoryPicker": {
@@ -1107,11 +1107,25 @@
     "recipes": {
         "title": "Recetas de LoRA",
         "filter": {
+            "title": "Filtrar recetas",
             "countTitle": "{name} — {count} recetas"
+        },
+        "bulk": {
+            "noSelection": "No hay recetas seleccionadas"
+        },
+        "move": {
+            "failed": "Error al mover receta(s): {message}"
+        },
+        "deleteModal": {
+            "message": "¿Estás seguro de que quieres eliminar esta receta?",
+            "note": "Eliminar esta receta no afectará a los archivos LoRA utilizados en ella.",
+            "deleting": "Eliminando..."
         },
         "actions": {
             "sendCheckpoint": "Enviar a ComfyUI",
             "sendRecipe": "Enviar a ComfyUI",
+            "sendRecipeModes": "Enviar receta al workflow (clic: añadir, Mayús+clic: reemplazar)",
+            "shareRecipe": "Compartir receta",
             "copyRecipeSyntax": "Copiar sintaxis de receta",
             "deleteRecipeWithShortcut": "Eliminar receta (Del)"
         },
@@ -1457,11 +1471,44 @@
     },
     "workflows": {
         "title": "Workflows",
+        "itemLabel": "Workflow",
+        "filter": {
+            "title": "Filtrar workflows"
+        },
+        "bulk": {
+            "noSelection": "No hay workflows seleccionados"
+        },
         "contextMenu": {
             "sendToComfy": "Abrir en ComfyUI",
             "updateFromComfy": "Actualizar desde ComfyUI",
             "copyWorkflow": "Copiar workflow",
-            "restoreDownloaded": "Restaurar versión descargada"
+            "restoreDownloaded": "Restaurar versión descargada",
+            "moveWorkflow": "Mover workflow a carpeta",
+            "deleteWorkflow": "Eliminar workflow"
+        },
+        "modals": {
+            "delete": {
+                "title": "Eliminar workflow",
+                "message": "¿Estás seguro de que quieres eliminar este workflow y todos los archivos asociados?",
+                "failed": "Error al eliminar el workflow: {message}"
+            },
+            "move": {
+                "title": "Mover workflow",
+                "bulkTitle": "Mover {count} workflows",
+                "selectRoot": "Seleccionar raíz del workflow:",
+                "targetHint": "Selecciona un directorio raíz de workflows",
+                "noRoots": "No se encontró ninguna raíz de workflows",
+                "failed": "Error al mover workflow(s): {message}"
+            },
+            "bulkDelete": {
+                "title": "Eliminar múltiples workflows",
+                "message": "¿Estás seguro de que quieres eliminar todos los workflows seleccionados y sus archivos asociados?",
+                "countMessage": "workflows serán eliminados permanentemente."
+            }
+        },
+        "relink": {
+            "success": "Workflow re-vinculado exitosamente a CivitAI",
+            "civArchiveSuccess": "Workflow re-vinculado exitosamente mediante CivitArchive"
         },
         "sendToComfy": {
             "success": "Workflow enviado a ComfyUI",
@@ -1492,14 +1539,10 @@
             "enableFailed": "No se pudieron activar los workflows"
         },
         "noPaths": {
-            "title": "No se encontraron carpetas de workflows",
-            "descriptionStandalone": "La gestión de workflows está activada, pero no se encontraron carpetas de workflows. Añade tus carpetas de workflows en Configuración → Rutas de modelos y reinicia LoRA Manager.",
-            "hintStandalone": "Los workflows se leen de las entradas folder_paths.workflows.",
-            "descriptionComfyUI": "La gestión de workflows está activada, pero no hay carpetas de workflows configuradas. Añade carpetas de workflows en Configuración → Biblioteca y recarga esta página.",
-            "hintComfyUI": "Los workflows se guardan en sus propias carpetas de biblioteca (folder_paths.workflows); la lista de workflows integrada de ComfyUI no se modifica.",
-            "openSettings": "Abrir configuración",
-            "openModelPaths": "Configurar carpetas de modelos",
-            "openSettingsFolder": "Abrir carpeta de ajustes"
+            "title": "No hay carpeta de workflows configurada",
+            "description": "La gestión de workflows está activada, pero no hay ninguna carpeta de workflows configurada. Define la carpeta de workflows en Configuración → Biblioteca y recarga esta página.",
+            "hint": "La carpeta de la biblioteca de workflows es independiente de la lista de workflows integrada en ComfyUI.",
+            "openSettings": "Abrir configuración"
         }
     },
     "sidebar": {

@@ -637,9 +637,10 @@
             "enableOtherModels": "その他のモデル管理",
             "enableOtherModelsHelp": "オフにすると、VAE / Upscaler / Text Encoder / CLIP Vision / ControlNet フォルダーはスキャンされず、その他のモデルページは無効のままになり、これらのモデルタイプはダウンロードできません。",
             "enableWorkflows": "ワークフロー管理",
-            "enableWorkflowsHelp": "オフにすると、ワークフローフォルダー（folder_paths.workflows）はスキャンされず、ワークフローページは無効のままになり、CivitAIのWorkflowリソースをリンクしたりダウンロードしたりできなくなります。",
-            "workflowFolders": "ワークフローフォルダー",
-            "workflowFoldersHelp": "ComfyUIのワークフローJSONファイルをスキャンするフォルダーです。LoRA Managerのみが管理し（ComfyUIとは共有されません）、変更はすぐに反映されます。",
+            "enableWorkflowsHelp": "オフにすると、ワークフローライブラリフォルダーはスキャンされず、ワークフローページは無効のままになり、CivitAIのWorkflowリソースをリンクしたりダウンロードしたりできなくなります。",
+            "workflowFolder": "ワークフローライブラリフォルダー",
+            "workflowFolderHelp": "ComfyUIのワークフローJSONファイルをスキャンする単一のフォルダーです。LoRA Managerのみが管理し（ComfyUIとは共有されません）、変更はすぐに反映されます。",
+            "workflowFolderPlaceholder": "/path/to/workflows",
             "otherSubTypes": "管理するモデルタイプ",
             "otherSubTypesHelp": "その他のモデルページでスキャンおよび表示するカテゴリを選択します。",
             "subTypeVae": "VAE",
@@ -693,8 +694,7 @@
                 "text_encoders": "Text Encoderパス",
                 "clip": "CLIPパス（レガシー）",
                 "clip_vision": "CLIP Visionパス",
-                "controlnet": "ControlNetパス",
-                "workflows": "ワークフローパス"
+                "controlnet": "ControlNetパス"
             }
         },
         "directoryPicker": {
@@ -1107,11 +1107,25 @@
     "recipes": {
         "title": "LoRAレシピ",
         "filter": {
+            "title": "レシピをフィルタ",
             "countTitle": "{name} —— {count} 件のレシピ"
+        },
+        "bulk": {
+            "noSelection": "レシピが選択されていません"
+        },
+        "move": {
+            "failed": "レシピの移動に失敗しました：{message}"
+        },
+        "deleteModal": {
+            "message": "このレシピを削除してもよろしいですか？",
+            "note": "このレシピを削除しても、使用されているLoRAファイルには影響しません。",
+            "deleting": "削除中..."
         },
         "actions": {
             "sendCheckpoint": "ComfyUIへ送信",
             "sendRecipe": "ComfyUIへ送信",
+            "sendRecipeModes": "レシピをワークフローへ送信（クリック：追加、Shift+クリック：置き換え）",
+            "shareRecipe": "レシピを共有",
             "copyRecipeSyntax": "レシピ構文をコピー",
             "deleteRecipeWithShortcut": "レシピを削除（Del）"
         },
@@ -1457,11 +1471,44 @@
     },
     "workflows": {
         "title": "ワークフロー",
+        "itemLabel": "ワークフロー",
+        "filter": {
+            "title": "ワークフローをフィルタ"
+        },
+        "bulk": {
+            "noSelection": "ワークフローが選択されていません"
+        },
         "contextMenu": {
             "sendToComfy": "ComfyUIで開く",
             "updateFromComfy": "ComfyUIから更新",
             "copyWorkflow": "ワークフローをコピー",
-            "restoreDownloaded": "ダウンロード済みバージョンを復元"
+            "restoreDownloaded": "ダウンロード済みバージョンを復元",
+            "moveWorkflow": "ワークフローをフォルダに移動",
+            "deleteWorkflow": "ワークフローを削除"
+        },
+        "modals": {
+            "delete": {
+                "title": "ワークフローを削除",
+                "message": "このワークフローと関連するすべてのファイルを削除してもよろしいですか？",
+                "failed": "ワークフローの削除に失敗しました：{message}"
+            },
+            "move": {
+                "title": "ワークフローを移動",
+                "bulkTitle": "{count} 件のワークフローを移動",
+                "selectRoot": "ワークフロールートを選択：",
+                "targetHint": "ワークフローのルートディレクトリを選択",
+                "noRoots": "ワークフロールートが見つかりません",
+                "failed": "ワークフローの移動に失敗しました：{message}"
+            },
+            "bulkDelete": {
+                "title": "複数のワークフローを削除",
+                "message": "選択したすべてのワークフローと関連ファイルを削除してもよろしいですか？",
+                "countMessage": "ワークフローが完全に削除されます。"
+            }
+        },
+        "relink": {
+            "success": "ワークフローがCivitAIに正常に再リンクされました",
+            "civArchiveSuccess": "ワークフローがCivitArchive経由で正常に再リンクされました"
         },
         "sendToComfy": {
             "success": "ワークフローをComfyUIへ送信しました",
@@ -1492,14 +1539,10 @@
             "enableFailed": "ワークフローの有効化に失敗しました"
         },
         "noPaths": {
-            "title": "ワークフローフォルダーが見つかりません",
-            "descriptionStandalone": "ワークフロー管理はオンですが、ワークフローフォルダーが見つかりませんでした。「設定 > モデルパス」でワークフローフォルダーを追加し、LoRA Managerを再起動してください。",
-            "hintStandalone": "ワークフローはfolder_paths.workflowsのエントリから読み込まれます。",
-            "descriptionComfyUI": "ワークフロー管理はオンですが、ワークフローフォルダーが設定されていません。「設定 > ライブラリ」でワークフローフォルダーを追加し、このページを再読み込みしてください。",
-            "hintComfyUI": "ワークフローは専用のライブラリフォルダー（folder_paths.workflows）に保存されます。ComfyUI標準のワークフローリストには影響しません。",
-            "openSettings": "設定を開く",
-            "openModelPaths": "モデルフォルダーを設定",
-            "openSettingsFolder": "設定フォルダーを開く"
+            "title": "ワークフローフォルダーが設定されていません",
+            "description": "ワークフロー管理はオンですが、ワークフローフォルダーが設定されていません。「設定 > ライブラリ」でワークフローフォルダーを設定し、このページを再読み込みしてください。",
+            "hint": "ワークフローライブラリフォルダーは、ComfyUI標準のワークフローリストとは別です。",
+            "openSettings": "設定を開く"
         }
     },
     "sidebar": {

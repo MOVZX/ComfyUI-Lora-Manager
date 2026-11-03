@@ -80,9 +80,6 @@
     <div class="context-menu-item" data-action="refresh-metadata"><i class="fas fa-sync"></i> {{ t('loras.contextMenu.refreshMetadata') }}</div>
     <div class="context-menu-item" data-action="relink-civitai"><i class="fas fa-external-link-alt"></i> {{ t('loras.contextMenu.linkCivitai') }}</div>
     <div class="context-menu-separator menu-section-break"></div>
-    <!-- Workflow -->
-    <div class="context-menu-item" data-action="copyname"><i class="fas fa-copy"></i> {{ t('loras.contextMenu.copyFilename') }}</div>
-    <div class="context-menu-separator menu-section-break"></div>
     <!-- Media / Preview -->
     <div class="context-menu-item" data-action="replace-preview"><i class="fas fa-image"></i> {{ t('loras.contextMenu.replacePreview') }}</div>
     <div class="context-menu-separator menu-section-break"></div>
@@ -90,11 +87,10 @@
     <div class="context-menu-item" data-action="set-nsfw"><i class="fas fa-exclamation-triangle"></i> {{ t('loras.contextMenu.setContentRating') }}</div>
     <div class="context-menu-separator menu-section-break"></div>
     <!-- Organization -->
-    <div class="context-menu-item" data-action="move"><i class="fas fa-folder-open"></i> {{ t('loras.contextMenu.moveToFolder') }}</div>
+    <div class="context-menu-item" data-action="move"><i class="fas fa-folder-open"></i> {{ t('workflows.contextMenu.moveWorkflow') }}</div>
     <div class="context-menu-separator"></div>
     <!-- Destructive -->
-    <div class="context-menu-item" data-action="exclude"><i class="fas fa-eye-slash"></i> {{ t('loras.contextMenu.excludeModel') }}</div>
-    <div class="context-menu-item delete-item" data-action="delete"><i class="fas fa-trash"></i> {{ t('loras.contextMenu.deleteModel') }}</div>
+    <div class="context-menu-item delete-item" data-action="delete"><i class="fas fa-trash"></i> {{ t('workflows.contextMenu.deleteWorkflow') }}</div>
 </div>
 {% endblock %}
 
@@ -113,25 +109,11 @@
     <div class="workflows-disabled">
         <i class="fas fa-folder-open"></i>
         <h2>{{ t('workflows.noPaths.title') }}</h2>
-        {% if standalone_mode %}
-        <p>{{ t('workflows.noPaths.descriptionStandalone') }}</p>
-        <p class="workflows-disabled-hint">{{ t('workflows.noPaths.hintStandalone') }}</p>
-        <button id="openModelPathsSettingsBtn" type="button">
-            <i class="fas fa-cog"></i> {{ t('workflows.noPaths.openModelPaths') }}
-        </button>
-        {% if settings_file %}
-        <p class="workflows-settings-file"><i class="fas fa-file-alt"></i> <code>{{ settings_file }}</code></p>
-        {% endif %}
-        <button id="openSettingsFolderBtn" type="button">
-            <i class="fas fa-folder-open"></i> {{ t('workflows.noPaths.openSettingsFolder') }}
-        </button>
-        {% else %}
-        <p>{{ t('workflows.noPaths.descriptionComfyUI') }}</p>
-        <p class="workflows-disabled-hint">{{ t('workflows.noPaths.hintComfyUI') }}</p>
+        <p>{{ t('workflows.noPaths.description') }}</p>
+        <p class="workflows-disabled-hint">{{ t('workflows.noPaths.hint') }}</p>
         <button id="openWorkflowsSettingsBtn" type="button">
             <i class="fas fa-cog"></i> {{ t('workflows.noPaths.openSettings') }}
         </button>
-        {% endif %}
     </div>
     {% else %}
     <div class="sticky-topbar">

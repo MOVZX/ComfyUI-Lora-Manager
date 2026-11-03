@@ -38,6 +38,7 @@
       'theme': 'dark',
       'workflow_folder_paths': list([
       ]),
+      'workflow_path': '',
     }),
     'success': True,
   })
