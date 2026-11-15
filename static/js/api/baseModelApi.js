@@ -535,10 +535,19 @@ export class BaseModelApiClient {
         const etaTracker = createScanEtaTracker();
         let ws = null;
         let lastProgressStage = null;
+        let lastProgressValue = 0;
 
         const handleScanProgress = (data) => {
-            if (typeof data.progress === 'number') {
-                state.loadingManager.setProgress(data.progress);
+            const hasProgress = Number.isFinite(data.progress);
+            if (hasProgress && data.status === 'processing') {
+                state.loadingManager.setIndeterminate(false);
+            }
+            if (hasProgress) {
+                const progress = Math.min(100, Math.max(0, data.progress));
+                lastProgressValue = Math.max(lastProgressValue, progress);
+                state.loadingManager.setProgress(lastProgressValue, {
+                    showPercent: data.status === 'processing',
+                });
             }
             // The per-file rate of one stage says nothing about the next one:
             // the walk phase counts files while the new-file pass processes
@@ -552,6 +561,7 @@ export class BaseModelApiClient {
                 { total: data.total },
                 data.stage || ''
             );
+            let etaText = '';
             if (data.status === 'processing' && data.stage === 'reconcile_scan') {
                 // Walk phase: the real file count is only known once the walk
                 // finishes, so report the files checked so far and the roots
@@ -570,26 +580,21 @@ export class BaseModelApiClient {
                     statusText += roots.length
                         ? ` ${roots.join(', ')} (${filesText})`
                         : ` (${filesText})`;
-                    const etaText = etaTracker.update(data.processed, data.total);
-                    if (etaText) {
-                        statusText += ` | ${etaText}`;
-                    }
+                    etaText = etaTracker.update(data.processed, data.total) || '';
                 }
             } else if (data.status === 'processing' && data.total > 0) {
                 statusText += ` (${data.processed}/${data.total})`;
                 if (data.current_name) {
                     statusText += ` ${data.current_name}`;
                 }
-                const etaText = etaTracker.update(data.processed, data.total);
-                if (etaText) {
-                    statusText += ` | ${etaText}`;
-                }
+                etaText = etaTracker.update(data.processed, data.total) || '';
             }
-            state.loadingManager.setStatus(statusText);
+            state.loadingManager.setStatus(statusText, etaText);
         };
 
         try {
             state.loadingManager.show(initialMessage, 0);
+            state.loadingManager.setIndeterminate(true);
             state.loadingManager.showCancelButton(() => {
                 this.cancelTask();
                 abortController.abort();
@@ -1769,11 +1774,25 @@ export class BaseModelApiClient {
         });
     }
 
+    /**
+     * Whether the View Local Versions filter is active for this model type.
+     */
+    _isVlmActiveForPage() {
+        const vlmModelId = getSessionItem('vlm_model_id');
+        const vlmPageType = getSessionItem('vlm_page_type');
+        return Boolean(vlmModelId) && vlmPageType === this.modelType;
+    }
+
     _buildQueryParams(baseParams, pageState) {
         const params = new URLSearchParams(baseParams);
         const isExcludedView = pageState.viewMode === 'excluded';
+        // View Local Versions is library-wide: a version moved to another folder
+        // is still a local version, so the browsing folder must not narrow it.
+        // PageControls clears the selection when the filter starts; this guard
+        // also covers state restored from storage.
+        const isVlmActive = this._isVlmActiveForPage();
 
-        if (!isExcludedView && pageState.activeFolder !== null) {
+        if (!isExcludedView && !isVlmActive && pageState.activeFolder !== null) {
             params.append('folder', pageState.activeFolder);
         }
 
@@ -1811,8 +1830,7 @@ export class BaseModelApiClient {
         params.append('recursive', pageState.searchOptions.recursive ? 'true' : 'false');
 
         // Pass group-by-model mode to backend (skip when showing all versions of a specific model)
-        const vlmModelId = getSessionItem('vlm_model_id');
-        if (state.global.settings.group_by_model && !vlmModelId) {
+        if (state.global.settings.group_by_model && !isVlmActive) {
             params.append('group_by_model', 'true');
         }
 
@@ -1898,16 +1916,17 @@ export class BaseModelApiClient {
 
     _addModelSpecificParams(params, pageState) {
         // Check for View Local Versions filter (takes priority over recipe filters)
-        const vlmModelId = getSessionItem('vlm_model_id');
-        const vlmPageType = getSessionItem('vlm_page_type');
-        if (vlmModelId && vlmPageType === this.modelType) {
-            params.append('civitai_model_id', vlmModelId);
+        if (this._isVlmActiveForPage()) {
+            params.append('civitai_model_id', getSessionItem('vlm_model_id'));
             const vlmBaseModel = getSessionItem('vlm_base_model');
             if (vlmBaseModel) {
                 params.append('base_model', vlmBaseModel);
             }
             return;
-        } else if (vlmModelId && vlmPageType !== this.modelType) {
+        }
+        const vlmModelId = getSessionItem('vlm_model_id');
+        const vlmPageType = getSessionItem('vlm_page_type');
+        if (vlmModelId && vlmPageType !== this.modelType) {
             // Stale VLM data from a different page type — clean up
             removeSessionItem('vlm_model_id');
             removeSessionItem('vlm_model_name');
@@ -2226,6 +2245,20 @@ export class BaseModelApiClient {
     }
 
     async fetchModelMetadata(filePath) {
+        const result = await this.fetchModelMetadataWithStatus(filePath);
+        return result.metadata;
+    }
+
+    /**
+     * Fetch the full CivitAI metadata together with its provenance.
+     *
+     * The backend degrades to the cached payload when `.metadata.json` cannot
+     * be read (offline drive, unmounted share, missing sidecar), so callers
+     * that render a full view need to know whether what they got is complete:
+     *
+     * @returns {Promise<{metadata: Object, partial: boolean, offline: boolean}>}
+     */
+    async fetchModelMetadataWithStatus(filePath) {
         try {
             const params = new URLSearchParams({ file_path: filePath });
             const response = await fetch(`${this.apiConfig.endpoints.metadata}?${params}`);
@@ -2237,7 +2270,11 @@ export class BaseModelApiClient {
             const data = await response.json();
 
             if (data.success) {
-                return data.metadata;
+                return {
+                    metadata: data.metadata || {},
+                    partial: Boolean(data.partial),
+                    offline: Boolean(data.offline),
+                };
             } else {
                 throw new Error(data.error || `No metadata found for ${this.apiConfig.config.singularName}`);
             }
@@ -2345,8 +2382,8 @@ export class BaseModelApiClient {
                     };
 
                     ws.onerror = (error) => {
-                        console.error('WebSocket error during auto-organize:', error);
-                        reject(new Error('Connection error'));
+                        console.warn('Auto-organize progress WebSocket unavailable; using the REST result:', error);
+                        resolve(null);
                     };
                 });
 
@@ -2377,12 +2414,22 @@ export class BaseModelApiClient {
                     throw new Error(errorData.error || 'Failed to start auto-organize operation');
                 }
 
-                // Wait for the operation to complete via WebSocket
-                const result = await operationComplete;
+                const responseData = await response.json();
+                const progressResult = await operationComplete;
+                const result = progressResult || {
+                    ...responseData,
+                    ...(responseData.summary || {}),
+                };
 
                 // Show appropriate success message based on results
                 if (result.status === 'cancelled') {
                     showToast('toast.api.operationCancelledPartial', { success: result.success, total: result.total }, 'info');
+                } else if (!progressResult) {
+                    showToast('toast.loras.autoOrganizeProgressUnavailable', {
+                        success: result.success,
+                        failures: result.failures,
+                        total: result.total
+                    }, 'warning');
                 } else if (result.failures === 0) {
                     showToast('toast.loras.autoOrganizeSuccess', {
                         count: result.success,

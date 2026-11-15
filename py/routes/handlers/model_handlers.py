@@ -24,7 +24,7 @@ from ...services.connectivity_guard import (
     OFFLINE_FRIENDLY_MESSAGE,
     is_expected_offline_error,
 )
-from ...services.metadata_sync_service import MetadataSyncService
+from ...services.metadata_sync_service import MetadataSyncService, normalize_creator_updates
 from ...services.model_file_service import (
     ModelMoveService,
     normalize_relative_folder,
@@ -961,7 +961,23 @@ class ModelManagementHandler:
             if not file_path:
                 return web.Response(text="File path is required", status=400)
 
+            if not os.path.isfile(os.path.abspath(file_path)):
+                return web.json_response(
+                    {
+                        "success": False,
+                        "error": "Model file no longer exists; refresh the model list before editing metadata",
+                    },
+                    status=409,
+                )
+
             metadata_updates = {k: v for k, v in data.items() if k != "file_path"}
+            try:
+                metadata_updates = normalize_creator_updates(metadata_updates)
+            except ValueError as exc:
+                return web.json_response(
+                    {"success": False, "error": str(exc)},
+                    status=400,
+                )
 
             updated_metadata = await self._metadata_sync.save_metadata_updates(
                 file_path=file_path,
@@ -995,6 +1011,15 @@ class ModelManagementHandler:
 
             if not isinstance(new_tags, list):
                 return web.Response(text="Tags must be a list", status=400)
+
+            if not os.path.isfile(os.path.abspath(file_path)):
+                return web.json_response(
+                    {
+                        "success": False,
+                        "error": "Model file no longer exists; refresh the model list before editing metadata",
+                    },
+                    status=409,
+                )
 
             tags, auto_tags = await self._tag_update_service.add_tags(
                 file_path=file_path,
@@ -1702,9 +1727,24 @@ class ModelQueryHandler:
             file_path = request.query.get("file_path")
             if not file_path:
                 return web.Response(text="File path is required", status=400)
-            metadata = await self._service.get_model_metadata(file_path)
+            metadata, partial, offline = await self._service.get_model_metadata_with_fallback(
+                file_path
+            )
             if metadata is not None:
-                return web.json_response({"success": True, "metadata": metadata})
+                return web.json_response(
+                    {
+                        "success": True,
+                        "metadata": metadata,
+                        # ``partial``: rebuilt from the cache because the
+                        # .metadata.json could not be read (offline drive,
+                        # unmounted share, missing/corrupt sidecar).
+                        # ``offline``: the model path is not under a reachable
+                        # root, so file actions will fail even when the sidecar
+                        # itself is readable (centralized sidecar storage).
+                        "partial": partial,
+                        "offline": offline,
+                    }
+                )
             return web.json_response(
                 {
                     "success": False,
@@ -1841,10 +1881,16 @@ class ModelQueryHandler:
                 or allow_selling_generated_content is not None
             )
 
-            matching_paths = await self._service.search_relative_paths(
-                search,
-                limit,
-                offset,
+            match_model_name = request.query.get("match_model_name", "").lower() in (
+                "1",
+                "true",
+            )
+            include_model_name = request.query.get("include_model_name", "").lower() in (
+                "1",
+                "true",
+            )
+
+            search_kwargs = dict(
                 folder=folder,
                 recursive=recursive,
                 base_models=base_models,
@@ -1855,6 +1901,29 @@ class ModelQueryHandler:
                 credit_required=credit_required,
                 allow_selling_generated_content=allow_selling_generated_content,
                 apply_filters=apply_filters,
+            )
+
+            if match_model_name or include_model_name:
+                matches = await self._service.search_relative_path_matches(
+                    search,
+                    limit,
+                    offset,
+                    match_model_name=match_model_name,
+                    **search_kwargs,
+                )
+                payload = {
+                    "success": True,
+                    "relative_paths": [match["relative_path"] for match in matches],
+                }
+                if include_model_name:
+                    payload["items"] = matches
+                return web.json_response(payload)
+
+            matching_paths = await self._service.search_relative_paths(
+                search,
+                limit,
+                offset,
+                **search_kwargs,
             )
             return web.json_response(
                 {"success": True, "relative_paths": matching_paths}
@@ -1908,6 +1977,11 @@ class ModelQueryHandler:
                 exc_info=True,
             )
             return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+
+def _is_truthy(value: Optional[str]) -> bool:
+    """Parse an optional boolean query-string flag."""
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class ModelDownloadHandler:
@@ -2138,6 +2212,26 @@ class ModelDownloadHandler:
             # Normalize falsy payloads (e.g. {}) to None (#1058)
             file_params = (json.loads(file_params_json) if file_params_json else None) or None
 
+            resolved = {}
+            if self._download_coordinator is not None:
+                try:
+                    resolved = await self._download_coordinator.resolve_download_target({
+                        "model_id": model_id,
+                        "model_version_id": model_version_id,
+                        "source": source,
+                        "file_params": file_params,
+                    })
+                except Exception as exc:
+                    # Queueing remains available during metadata outages. The
+                    # queue service conservatively dedups these unresolved rows.
+                    self._logger.warning("Could not canonicalize download target: %s", exc)
+
+            model_id = resolved.get("model_id", model_id)
+            model_version_id = resolved.get("model_version_id", model_version_id)
+            model_name = model_name or resolved.get("model_name", "")
+            version_name = version_name or resolved.get("version_name", "")
+            file_params = resolved.get("file_params", file_params)
+
             service = await DownloadQueueService.get_instance()
             item = await service.add_to_queue(
                 download_id=download_id,
@@ -2149,7 +2243,14 @@ class ModelDownloadHandler:
                 source=source,
                 file_params=file_params,
             )
-            return web.json_response({"success": True, "item": item})
+            duplicate = item.pop("duplicate", False)
+            return web.json_response({
+                "success": True,
+                "queued": bool(item) and not duplicate,
+                "duplicate": duplicate,
+                "reason": "already_queued" if duplicate else None,
+                "item": item,
+            })
         except Exception as exc:
             self._logger.error(
                 "Error adding to download queue: %s", exc, exc_info=True
@@ -2293,6 +2394,11 @@ class ModelDownloadHandler:
             download_id = request.query.get("download_id")
             id_str = request.query.get("id")
             item_id = int(id_str) if id_str else None
+            # ``start=true`` runs the retried download on the backend. The
+            # companion extension omits it (it drains the queue itself); a
+            # client without the extension would otherwise leave the row
+            # ``queued`` forever, since the SQLite queue has no executor.
+            start = _is_truthy(request.query.get("start"))
 
             if not download_id and not item_id:
                 return web.json_response(
@@ -2311,12 +2417,55 @@ class ModelDownloadHandler:
                 return web.json_response(
                     {"success": False, "error": "History item not found or not retryable"}
                 )
-            return web.json_response({"success": True, "item": item})
+            if not start:
+                return web.json_response({"success": True, "item": item})
+
+            result = await self._start_queued_download(item)
+            payload = dict(result)
+            payload["item"] = item
+            payload["started"] = True
+            if not result.get("success", False):
+                status = 429 if result.get("reason") == "rate_limited" else 500
+                return web.json_response(payload, status=status)
+            return web.json_response(payload)
+        except DownloadModelValidationError as exc:
+            return web.json_response({"success": False, "error": str(exc)}, status=400)
+        except DownloadModelEarlyAccessError as exc:
+            self._logger.warning("Early access error: %s", exc)
+            return web.json_response({"success": False, "error": str(exc)}, status=401)
         except Exception as exc:
             self._logger.error(
                 "Error retrying download from history: %s", exc, exc_info=True
             )
             return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+    async def _start_queued_download(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Start a re-queued download without a client-side executor.
+
+        ``retry_from_history`` only writes a ``queued`` row. The queue is
+        normally drained by the companion browser extension, so callers
+        without it (headless or third-party integrations) pass
+        ``start=true`` to have the backend run the download now. The payload
+        mirrors what the extension sends on retry, and reuses the re-queued
+        ``download_id`` so the normal status transitions keep updating the
+        same row.
+        """
+        file_params: Any = item.get("file_params")
+        if isinstance(file_params, str):
+            try:
+                file_params = json.loads(file_params) or None
+            except json.JSONDecodeError:
+                file_params = None
+
+        payload = {
+            "model_id": item.get("model_id"),
+            "model_version_id": item.get("model_version_id"),
+            "download_id": item.get("download_id"),
+            "use_default_paths": True,
+            "source": item.get("source") or "retry",
+            "file_params": file_params or None,
+        }
+        return await self._download_use_case.execute(payload)
 
     async def retry_all_failed_downloads(self, request: web.Request) -> web.Response:
         try:

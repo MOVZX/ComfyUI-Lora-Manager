@@ -263,7 +263,7 @@
                 "loraName": "LoRAファイル名",
                 "loraModel": "LoRAモデル名",
                 "prompt": "プロンプト",
-                "triggerWords": "[TODO: Translate] Trigger Words"
+                "triggerWords": "トリガーワード"
             }
         },
         "filter": {
@@ -385,10 +385,19 @@
             "copied": "設定パスをクリップボードにコピーしました: {{path}}",
             "clipboardFallback": "設定パス: {{path}}"
         },
+        "comfyuiNodes": {
+            "title": "ComfyUI ノード設定",
+            "description": "ノード関連の設定は ComfyUI 設定で行えます。",
+            "openButton": "ComfyUI 設定を開く",
+            "modelNameDisplayLink": "ノードラベルは ComfyUI ノード設定で個別に設定されます",
+            "openSucceeded": "ComfyUI 設定を開きました。",
+            "openFailed": "ComfyUI 設定を開けませんでした。先に ComfyUI を開いてください。"
+        },
         "sections": {
             "contentFiltering": "コンテンツフィルタリング",
             "downloads": "ダウンロード",
             "videoSettings": "動画設定",
+            "cardPreview": "カードプレビュー",
             "layoutSettings": "レイアウト設定",
             "licenseIcons": "ライセンスアイコン",
             "misc": "その他",
@@ -410,9 +419,33 @@
         "nav": {
             "general": "一般",
             "interface": "インターフェース",
+            "comfyuiNodes": "ComfyUI ノード",
             "library": "ライブラリ",
             "organization": "整理",
+            "about": "このアプリについて",
             "modelPaths": "モデルパス"
+        },
+        "about": {
+            "environmentTitle": "環境",
+            "environmentDescription": "LoRA ManagerとComfyUIで使用しているバージョンです。",
+            "copy": "コピー",
+            "appVersion": "LoRA Manager",
+            "comfyuiVersion": "ComfyUI",
+            "frontendVersion": "ComfyUIフロントエンド",
+            "pythonVersion": "Python",
+            "os": "OS",
+            "browser": "ブラウザ",
+            "hint": "問題を報告する際は、この情報を含めてください。",
+            "unavailable": "利用不可",
+            "copySuccess": "環境情報をコピーしました",
+            "copyFailed": "環境情報のコピーに失敗しました",
+            "linksTitle": "サポートとリンク",
+            "links": {
+                "reportIssue": "問題を報告",
+                "wiki": "ドキュメントWiki",
+                "github": "GitHubリポジトリ",
+                "discord": "Discordに参加"
+            }
         },
         "search": {
             "placeholder": "設定を検索...",
@@ -440,6 +473,12 @@
         "videoSettings": {
             "autoplayOnHover": "ホバー時に動画を自動再生",
             "autoplayOnHoverHelp": "動画プレビューはホバー時にのみ再生されます"
+        },
+        "cardPreview": {
+            "cycleOnHover": "ホバー時に例画像を切り替え",
+            "cycleOnHoverHelp": "カードのプレビュー画像にホバーすると、その例画像が順に切り替わります。カードのヘッダーやフッターにホバーしても切り替えは開始されないため、アクションボタンやツールチップはそのまま利用できます。選択中のプレビュー画像自体は変わりません。動画プレビューは対象外です。",
+            "cycleInterval": "切り替え間隔",
+            "cycleIntervalHelp": "カードにホバーしている間、例画像を切り替える間隔です。"
         },
         "autoOrganizeExclusions": {
             "label": "自動整理除外設定",
@@ -613,10 +652,6 @@
             "cardBlurAmountHelp": "モデルカードとレシピカードのヘッダー・フッターオーバーレイのぼかし強度を調整します（0 = ぼかしなし、20 = 最大ぼかし）。"
         },
         "folderSettings": {
-            "activeLibrary": "アクティブライブラリ（非推奨）",
-            "activeLibraryHelp": "設定済みのライブラリを切り替えてデフォルトのフォルダを更新します。選択を変更するとページが再読み込みされます。非推奨：複数ライブラリのサポートは今後のリリースで削除されます。単一ライブラリ内の複数のフォルダルートは引き続き完全にサポートされます。",
-            "loadingLibraries": "ライブラリを読み込み中...",
-            "noLibraries": "ライブラリが設定されていません",
             "defaultLoraRoot": "LoRAルート",
             "defaultLoraRootHelp": "ダウンロード、インポート、移動用のデフォルトLoRAルートディレクトリを設定",
             "defaultCheckpointRoot": "Checkpointルート",
@@ -726,6 +761,13 @@
         "priorityTags": {
             "title": "優先タグ",
             "description": "各モデルタイプのタグ優先順位をカスタマイズします (例: character, concept, style(toon|toon_style))",
+            "unsortedFallback": {
+                "label": "優先タグに一致しないモデルを 1 つのフォルダにまとめる",
+                "help": "優先タグに一致しないモデルは、{first_tag} からフォルダを作る代わりに 1 つのフォルダにまとめられます。タグがないモデルは影響を受けません。デフォルトはオフです。モデルを再整理するまで既存のフォルダは変わりません。",
+                "folderLabel": "フォルダ名",
+                "folderHelp": "優先タグに一致しない場合に {first_tag} の代わりに使われます。デフォルトのテンプレート {base_model}/{first_tag} では {base_model}/<フォルダ名> になります。空欄にすると現在の動作を維持します。",
+                "folderPlaceholder": "unsorted"
+            },
             "placeholder": "character, concept, style(toon|toon_style)",
             "helpLinkLabel": "優先タグのヘルプを開く",
             "modelTypes": {
@@ -759,12 +801,12 @@
                 "customTemplate": "カスタムテンプレート"
             },
             "customTemplatePlaceholder": "カスタムテンプレートを入力（例：{base_model}/{author}/{first_tag}）",
-            "workflowHint": "[TODO: Translate] Applies to workflow downloads and to Auto-Organize on the Workflows page.",
+            "workflowHint": "ワークフローのダウンロードと、ワークフローページの自動整理に適用されます。",
             "modelTypes": {
                 "lora": "LoRA",
                 "checkpoint": "Checkpoint",
                 "embedding": "Embedding",
-                "workflow": "[TODO: Translate] Workflow"
+                "workflow": "ワークフロー"
             },
             "baseModelPathMappings": "ベースモデルパスマッピング",
             "baseModelPathMappingsHelp": "特定のベースモデルのフォルダ名をカスタマイズ（例：\"Flux.1 D\" → \"flux\"）",
@@ -2123,7 +2165,35 @@
                 "aboutThisVersion": "このバージョンについて",
                 "baseModelSearchPlaceholder": "ベースモデルを検索...",
                 "baseModelSuggested": "おすすめ",
-                "baseModelNoMatch": "該当するベースモデルがありません"
+                "baseModelNoMatch": "該当するベースモデルがありません",
+                "creator": "作成者",
+                "creatorAdd": "作成者を追加",
+                "creatorEdit": "作成者を編集",
+                "creatorSearchPlaceholder": "作成者を検索するか、新しい名前を入力...",
+                "creatorLibraryHeader": "ライブラリ内の作成者",
+                "creatorMatchingHeader": "一致する作成者",
+                "creatorLibraryCount": "ライブラリ内 {count} 件",
+                "creatorCurrent": "現在：{name}",
+                "creatorCreate": "「{name}」を作成",
+                "creatorCreateAnnounce": "Enter キーを押して「{name}」を作成します。",
+                "creatorNew": "新しい作成者",
+                "creatorNoMatch": "「{name}」に一致する既存の作成者はありません",
+                "creatorEmptyLibrary": "ライブラリにはまだ作成者がいません。名前を入力して最初の作成者を追加してください。",
+                "creatorModelCount": "{count} 個のモデル",
+                "creatorModelCountOne": "{count} 個のモデル",
+                "creatorMatchCount": "{count} 件の一致",
+                "creatorMatchCountOne": "{count} 件の一致",
+                "creatorShowing": "{shown}/{total} 件を表示 —— 入力を続けて絞り込む",
+                "creatorRemove": "作成者を削除",
+                "creatorManual": "手動",
+                "creatorManualHint": "手動で追加されました。メタデータの更新では上書きされません。",
+                "creatorSaved": "作成者を更新しました",
+                "creatorRemoved": "作成者を削除しました",
+                "creatorSaveFailed": "作成者を更新できませんでした。もう一度お試しください。",
+                "creatorLoadFailed": "作成者を読み込めませんでした。新しい名前を入力することはできます。",
+                "creatorTooLong": "作成者名が長すぎます（最大 64 文字）",
+                "creatorLoading": "作成者を読み込み中...",
+                "creatorKeyboardHint": "↑↓ 移動 · ↵ 選択 · esc キャンセル"
             },
             "notes": {
                 "saved": "メモが正常に保存されました",
@@ -2171,6 +2241,7 @@
             "description": {
                 "noDescription": "モデルの説明がありません",
                 "failedToLoad": "モデルの説明の読み込みに失敗しました",
+                "offline": "説明はモデルファイルと一緒に保存されており、そのファイルはオフラインのディスク上にあります。ディスクを再接続して読み込んでください。",
                 "editTitle": "モデルの説明を編集",
                 "validation": {
                     "cannotBeEmpty": "説明を空にすることはできません"
@@ -2202,6 +2273,10 @@
                 "noDerivatives": "共有マージ不可",
                 "noReLicense": "同じ権限が必要",
                 "restrictionsLabel": "ライセンス制限"
+            },
+            "notices": {
+                "offline": "このモデルを保存しているディスクがオフラインです。キャッシュされた情報を表示しています——再接続するまで、ファイル操作と編集は利用できません。",
+                "partial": "モデルのメタデータファイルを読み込めませんでした。キャッシュされた情報を表示しています——説明、サンプル画像、作成者のアバターが利用できない場合があります。"
             },
             "loading": {
                 "exampleImages": "例画像を読み込み中...",
@@ -2734,6 +2809,7 @@
             "downloadSkippedByBaseModel": "ベースモデル {baseModel} が除外されているため、ダウンロードをスキップしました",
             "autoOrganizeSuccess": "{count} {type} の自動整理が正常に完了しました",
             "autoOrganizePartialSuccess": "自動整理が完了しました：{total} モデル中 {success} 移動、{failures} 失敗",
+            "autoOrganizeProgressUnavailable": "自動整理が完了しました：{total} モデル中 {success} 移動、{failures} 失敗。リアルタイムの進捗は利用できませんでした",
             "autoOrganizeFailed": "自動整理に失敗しました：{error}",
             "filenameTemplateSuccess": "{count} 件の{type}にファイル名テンプレートを正常に適用しました",
             "filenameTemplatePartialSuccess": "ファイル名テンプレートを適用しました：{total} 件中 {success} 件をリネーム、{failures} 件失敗",
@@ -2912,8 +2988,6 @@
             "compactModeToggled": "コンパクトモード {state}",
             "settingSaveFailed": "設定の保存に失敗しました：{message}",
             "displayDensitySet": "表示密度が {density} に設定されました",
-            "libraryLoadFailed": "ライブラリを読み込めませんでした: {message}",
-            "libraryActivateFailed": "ライブラリをアクティブ化できませんでした: {message}",
             "languageChangeFailed": "言語の変更に失敗しました：{message}",
             "cacheCleared": "キャッシュファイルが正常にクリアされました。次回のアクションでキャッシュが再構築されます。",
             "cacheClearFailed": "キャッシュのクリアに失敗しました：{error}",
