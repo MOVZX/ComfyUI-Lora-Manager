@@ -12,9 +12,12 @@ import { createBaseModelPicker, inferBaseModelsFromFilepaths } from '../componen
 import { getPriorityTagSuggestions } from '../utils/priorityTagHelpers.js';
 import { eventManager } from '../utils/EventManager.js';
 import { translate } from '../utils/i18nHelpers.js';
+import { showConfirmationModal } from '../utils/modalUtils.js';
+import { buildFilenameTemplateConfirmation, filenameTemplateSettingKey } from '../utils/filenameTemplateScope.js';
 import { probeExtension, delegateReimport, getCivitaiImageInfo } from '../utils/extensionReimportBridge.js';
 import { getNsfwLevelSelector } from '../components/shared/NsfwLevelSelector.js';
 import { AutoOrganizePreviewModal } from '../components/AutoOrganizePreviewModal.js';
+import { syncWildcardCardState } from '../utils/wildcardCardState.js';
 
 export class BulkManager {
     constructor() {
@@ -60,6 +63,7 @@ export class BulkManager {
                 checkUpdates: true,
                 moveAll: true,
                 autoOrganize: true,
+                filenameTemplate: true,
                 deleteAll: true,
                 setContentRating: true,
                 skipMetadataRefresh: true,
@@ -74,6 +78,7 @@ export class BulkManager {
                 checkUpdates: true,
                 moveAll: true,
                 autoOrganize: true,
+                filenameTemplate: true,
                 deleteAll: true,
                 setContentRating: false,
                 skipMetadataRefresh: true,
@@ -88,6 +93,7 @@ export class BulkManager {
                 checkUpdates: true,
                 moveAll: false,
                 autoOrganize: true,
+                filenameTemplate: true,
                 deleteAll: true,
                 setContentRating: true,
                 skipMetadataRefresh: true,
@@ -142,6 +148,24 @@ export class BulkManager {
                 // Metadata re-import/rematch are model-source concepts.
                 reimportMetadata: false,
                 rematchMetadata: false
+            },
+            [MODEL_TYPES.WILDCARD]: {
+                addTags: true,
+                sendToWorkflow: false,
+                copyAll: false,
+                refreshAll: true,
+                checkUpdates: true,
+                moveAll: true,
+                autoOrganize: true,
+                deleteAll: true,
+                setContentRating: true,
+                skipMetadataRefresh: true,
+                setFavorite: true,
+                unfavorite: true,
+                reimportMetadata: false,
+                rematchMetadata: false,
+                activateAll: true,
+                deactivateAll: true
             }
         };
 
@@ -199,6 +223,7 @@ export class BulkManager {
      */
     _noSelectionKey() {
         if (state.currentPageType === MODEL_TYPES.WORKFLOW) return 'workflows.bulk.noSelection';
+        if (state.currentPageType === MODEL_TYPES.WILDCARD) return 'wildcards.bulk.noSelection';
         if (state.currentPageType === 'recipes') return 'recipes.bulk.noSelection';
         return 'toast.models.noModelsSelected';
     }
@@ -728,6 +753,79 @@ export class BulkManager {
         await sendEmbeddingToWorkflow(joinedCode, exitBulkMode);
     }
 
+    async activateSelectedWildcards() {
+        return this._setSelectedWildcardsActive(true);
+    }
+
+    async deactivateSelectedWildcards() {
+        return this._setSelectedWildcardsActive(false);
+    }
+
+    async _setSelectedWildcardsActive(active) {
+        if (state.currentPageType !== MODEL_TYPES.WILDCARD) return;
+        if (state.selectedModels.size === 0) {
+            showToast(this._noSelectionKey(), {}, 'warning');
+            return;
+        }
+
+        const filePaths = Array.from(state.selectedModels);
+        const loadingMessage = translate(
+            'wildcards.bulk.updating',
+            { count: filePaths.length },
+            `Updating ${filePaths.length} wildcard resources...`,
+        );
+        state.loadingManager?.showSimpleLoading?.(loadingMessage);
+
+        try {
+            const apiClient = this.getActiveApiClient();
+            const response = active
+                ? await apiClient.bulkActivate(filePaths)
+                : await apiClient.bulkDeactivate(filePaths);
+            const results = Array.isArray(response?.results) ? response.results : [];
+            results.filter((result) => result.success).forEach((result) => {
+                syncWildcardCardState(result.file_path, result.active === true);
+            });
+
+            const successCount = Number(response?.success_count || 0);
+            const failureCount = Number(response?.failure_count || 0);
+            const firstFailure = results.find((result) => !result.success);
+            const conflictKeys = (firstFailure?.conflicts || [])
+                .slice(0, 3)
+                .map((conflict) => conflict.key)
+                .join(', ');
+            const failureMessage = conflictKeys || firstFailure?.error || 'Unknown error';
+
+            if (failureCount === 0) {
+                showToast(
+                    active ? 'wildcards.bulk.activated' : 'wildcards.bulk.deactivated',
+                    { count: successCount },
+                    'success',
+                );
+            } else if (successCount > 0) {
+                showToast(
+                    'wildcards.bulk.partial',
+                    { succeeded: successCount, failed: failureCount, message: failureMessage },
+                    'warning',
+                );
+            } else {
+                showToast(
+                    'wildcards.bulk.failed',
+                    { message: failureMessage },
+                    'error',
+                );
+            }
+
+            if (state.bulkMode) this.toggleBulkMode();
+            await resetAndReload(false);
+        } catch (error) {
+            console.error('Error updating wildcard activation:', error);
+            showToast('wildcards.bulk.failed', { message: error.message }, 'error');
+        } finally {
+            state.loadingManager?.hide?.();
+            state.loadingManager?.restoreProgressBar?.();
+        }
+    }
+
     showBulkDeleteModal() {
         if (state.selectedModels.size === 0) {
             showToast(this._noSelectionKey(), {}, 'warning');
@@ -736,10 +834,10 @@ export class BulkManager {
 
         const count = state.selectedModels.size;
         const isRecipes = state.currentPageType === 'recipes';
-        const isWorkflows = state.currentPageType === MODEL_TYPES.WORKFLOW;
+        const isWorkflows = state.currentPageType === MODEL_TYPES.WORKFLOW || state.currentPageType === MODEL_TYPES.WILDCARD;
         const keyPrefix = isRecipes
             ? 'modals.bulkDeleteRecipes'
-            : (isWorkflows ? 'workflows.modals.bulkDelete' : 'modals.bulkDelete');
+            : (state.currentPageType === MODEL_TYPES.WILDCARD ? 'wildcards.modals.bulkDelete' : (isWorkflows ? 'workflows.modals.bulkDelete' : 'modals.bulkDelete'));
 
         const titleEl = document.querySelector('#bulkDeleteModal h2');
         if (titleEl) {
@@ -2018,6 +2116,63 @@ export class BulkManager {
         } catch (error) {
             console.error('Error previewing bulk auto-organize:', error);
             previewModal.showError(error);
+        }
+    }
+
+    /**
+     * Rename only the selected models according to the configured filename
+     * template.
+     *
+     * The counterpart to the library-wide "Apply to Library Now" button in
+     * Settings: users whose library is mostly fine point this at the files that
+     * are not. A dry run first reports how many files would actually change, so
+     * the confirmation can quote real counts instead of the whole selection.
+     */
+    async applyFilenameTemplateToSelectedModels() {
+        if (state.selectedModels.size === 0) {
+            showToast('toast.loras.noModelsSelected', {}, 'error');
+            return;
+        }
+
+        const settingKey = filenameTemplateSettingKey(state.currentPageType);
+        if (!settingKey) {
+            return;
+        }
+
+        const apiClient = getModelApiClient();
+        if (typeof apiClient.previewFilenameTemplate !== 'function') {
+            return;
+        }
+
+        const filePaths = Array.from(state.selectedModels);
+        let preview;
+        try {
+            preview = await apiClient.previewFilenameTemplate({ filePaths });
+        } catch (error) {
+            console.error('Error previewing filename template apply:', error);
+            showToast('toast.loras.filenameTemplateFailed', { error: error.message }, 'error');
+            return;
+        }
+
+        if (!preview?.summary?.success) {
+            showToast('toast.loras.filenameTemplateNothingToRename', {}, 'info');
+            return;
+        }
+
+        const confirmed = await showConfirmationModal(
+            buildFilenameTemplateConfirmation(preview, 'selected', state.currentPageType)
+        );
+        if (!confirmed) {
+            return;
+        }
+
+        try {
+            await apiClient.applyFilenameTemplate(filePaths);
+            if (state.bulkMode) this.toggleBulkMode();
+            resetAndReload(true);
+        } catch (error) {
+            // The API client already surfaced a toast with the failure reason.
+            console.error('Error applying filename template to selected models:', error);
         }
     }
 

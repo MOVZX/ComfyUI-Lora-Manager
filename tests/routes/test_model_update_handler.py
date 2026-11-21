@@ -1155,6 +1155,65 @@ async def test_relink_civitai_passes_provider_name_for_civarchive_source():
 
 
 @pytest.mark.asyncio
+async def test_relink_civitai_carries_location_derived_sub_type():
+    """Relinking must keep the location-derived sub_type in the rebuilt payload.
+
+    A manually imported Flux UNet gets a sidecar seeded with
+    ``sub_type="checkpoint"``; relinking used to rebuild the cache entry from
+    that sidecar, flipping the card to CKPT and hiding the model from the UNET
+    loader dropdown until ComfyUI restarted.
+    """
+    relinked_payload = {
+        "model_name": "CenKreChro",
+        "sha256": "abc",
+        "sub_type": "diffusion_model",
+    }
+    metadata_sync = SimpleNamespace(
+        load_local_metadata=AsyncMock(
+            return_value={"model_name": "CenKreChro", "sub_type": "checkpoint"}
+        ),
+        relink_metadata=AsyncMock(return_value=relinked_payload),
+    )
+    scanner = SimpleNamespace(
+        update_single_model_cache=AsyncMock(),
+        resolve_sub_type_for_path=lambda file_path: "diffusion_model",
+    )
+    handler = ModelManagementHandler(
+        service=SimpleNamespace(scanner=scanner),
+        logger=logging.getLogger(__name__),
+        metadata_sync=metadata_sync,
+        preview_service=SimpleNamespace(),
+        tag_update_service=SimpleNamespace(),
+        lifecycle_service=SimpleNamespace(),
+    )
+
+    request = SimpleNamespace(
+        json=AsyncMock(
+            return_value={
+                "file_path": "/models/diffusion_models/model.safetensors",
+                "model_id": "1836040",
+                "model_version_id": "2427120",
+            }
+        )
+    )
+
+    response = await handler.relink_civitai(request)
+    assert response.status == 200
+
+    metadata_sync.relink_metadata.assert_awaited_once_with(
+        file_path="/models/diffusion_models/model.safetensors",
+        metadata={"model_name": "CenKreChro", "sub_type": "diffusion_model"},
+        model_id=1836040,
+        model_version_id=2427120,
+    )
+    scanner.update_single_model_cache.assert_awaited_once_with(
+        "/models/diffusion_models/model.safetensors",
+        "/models/diffusion_models/model.safetensors",
+        relinked_payload,
+    )
+
+
+@pytest.mark.asyncio
 async def test_relink_civitai_surfaces_provider_unavailable_without_500():
     metadata_sync = SimpleNamespace(
         load_local_metadata=AsyncMock(return_value={}),
@@ -1183,6 +1242,99 @@ async def test_relink_civitai_surfaces_provider_unavailable_without_500():
     payload = json.loads(response.text)
     assert payload["success"] is False
     assert "CivitArchive" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_relink_civitai_returns_formatted_entry_for_the_linked_card():
+    """The response carries the reformatted card so the grid patches one card.
+
+    Re-fetching the listing after a re-link resets the scroll position to the
+    top of page 1, so the frontend updates the affected card in place from this
+    payload instead.
+    """
+    relinked_payload = {"model_name": "Relinked", "sha256": "abc"}
+    cache_entry = {"file_path": "/tmp/model.safetensors", "model_name": "Relinked"}
+    formatted_entry = {
+        "file_path": "/tmp/model.safetensors",
+        "model_name": "Relinked",
+        "civitai": {"id": 456, "modelId": 123},
+    }
+    metadata_sync = SimpleNamespace(
+        load_local_metadata=AsyncMock(return_value={}),
+        relink_metadata=AsyncMock(return_value=relinked_payload),
+    )
+    service = SimpleNamespace(
+        scanner=SimpleNamespace(
+            update_single_model_cache=AsyncMock(return_value=cache_entry)
+        ),
+        format_response=AsyncMock(return_value=formatted_entry),
+    )
+    handler = ModelManagementHandler(
+        service=service,
+        logger=logging.getLogger(__name__),
+        metadata_sync=metadata_sync,
+        preview_service=SimpleNamespace(),
+        tag_update_service=SimpleNamespace(),
+        lifecycle_service=SimpleNamespace(),
+    )
+
+    request = SimpleNamespace(
+        json=AsyncMock(
+            return_value={
+                "file_path": "/tmp/model.safetensors",
+                "model_id": "123",
+                "model_version_id": "456",
+            }
+        )
+    )
+
+    response = await handler.relink_civitai(request)
+    assert response.status == 200
+    payload = json.loads(response.text)
+    assert payload["success"] is True
+    assert payload["metadata"] == formatted_entry
+    service.format_response.assert_awaited_once_with(cache_entry)
+
+
+@pytest.mark.asyncio
+async def test_relink_civitai_still_succeeds_when_entry_formatting_fails():
+    """A formatting fault must not report the persisted re-link as a failure."""
+    metadata_sync = SimpleNamespace(
+        load_local_metadata=AsyncMock(return_value={}),
+        relink_metadata=AsyncMock(
+            return_value={"model_name": "Relinked", "sha256": "abc"}
+        ),
+    )
+    service = SimpleNamespace(
+        scanner=SimpleNamespace(
+            update_single_model_cache=AsyncMock(return_value={"file_path": "/tmp/model.safetensors"})
+        ),
+        format_response=AsyncMock(side_effect=RuntimeError("boom")),
+    )
+    handler = ModelManagementHandler(
+        service=service,
+        logger=logging.getLogger(__name__),
+        metadata_sync=metadata_sync,
+        preview_service=SimpleNamespace(),
+        tag_update_service=SimpleNamespace(),
+        lifecycle_service=SimpleNamespace(),
+    )
+
+    request = SimpleNamespace(
+        json=AsyncMock(
+            return_value={
+                "file_path": "/tmp/model.safetensors",
+                "model_id": "123",
+                "model_version_id": "456",
+            }
+        )
+    )
+
+    response = await handler.relink_civitai(request)
+    assert response.status == 200
+    payload = json.loads(response.text)
+    assert payload["success"] is True
+    assert "metadata" not in payload
 
 
 def test_every_common_route_definition_resolves_to_a_handler():

@@ -130,6 +130,15 @@
             </div>
         </div>
     </div>
+    <div class="context-menu-section" data-section="activation">
+        <div class="context-menu-section-header">{{ t('wildcards.bulk.activationSection') }}</div>
+        <div class="context-menu-item" data-action="activate-all">
+            <i class="fas fa-bolt"></i> <span>{{ t('wildcards.bulk.activateAll') }}</span>
+        </div>
+        <div class="context-menu-item" data-action="deactivate-all">
+            <i class="fas fa-power-off"></i> <span>{{ t('wildcards.bulk.deactivateAll') }}</span>
+        </div>
+    </div>
     <div class="context-menu-section" data-section="attributes">
         <div class="context-menu-section-header">{{ t('loras.bulkOperations.sections.attributes') }}</div>
         <div class="context-menu-item" data-action="add-tags">
@@ -166,6 +175,9 @@
     </div>
     <div class="context-menu-section" data-section="organize">
         <div class="context-menu-section-header">{{ t('loras.bulkOperations.sections.organize') }}</div>
+        <div class="context-menu-item" data-action="apply-filename-template">
+            <i class="fas fa-file-signature"></i> <span>{{ t('loras.bulkOperations.applyFilenameTemplate') }}</span>
+        </div>
         <div class="context-menu-item" data-action="auto-organize">
             <i class="fas fa-magic"></i> <span>{{ t('loras.bulkOperations.autoOrganize') }}</span>
         </div>
@@ -226,6 +238,9 @@
     </div>
     <div class="context-menu-item" data-action="check-folder-updates">
         <i class="fas fa-bell"></i> <span>{{ t('sidebar.folderUpdateCheck.label') }}</span>
+    </div>
+    <div class="context-menu-item" data-action="apply-filename-template">
+        <i class="fas fa-file-signature"></i> <span>{{ t('sidebar.applyFilenameTemplate') }}</span>
     </div>
     <div class="context-menu-separator"></div>
     <div class="context-menu-item" data-action="create-subfolder">
